@@ -11,7 +11,7 @@
 | `feat*:` / `fix*:` / `perf*:` / `refactor*:` | 触发自动发版检测（feat→minor，其余→patch） |
 | `feat!:` / `fix!:` 或 footer `BREAKING CHANGE:` | major 版本 |
 | 普通 `feat:` / `fix:` / `ci:` / `docs:` / `chore:` | 不发版 |
-| 提交信息含 `[skip ci]` | 跳过 CI（Release 版本 bump 提交自带） |
+| 提交信息含 `[skip ci]` | 跳过 CI（Release PR 的 bump 提交**不带**，CI 会完整运行作为合并门禁） |
 
 检测逻辑见 `scripts/detect_bump.py`（`should_release_commit`）。
 
