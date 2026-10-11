@@ -33,6 +33,7 @@ import {
 } from "../detailModel";
 import type { LlmUsageRecord, MindMapNode, TaskDetail, TaskEvent, TaskMarkdownExportResponse, TaskMindMapResponse, TaskResult, TaskStatus, TaskSummary, TaskVisualEvidenceResponse, VideoAssetDetail, VideoPageBatchOption, VideoTaskBatchResponse, VisualEvidenceFrame, VisualEvidenceObservation } from "../types";
 import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, sanitizeMindMapLabel, summarizeEvents, taskStatusLabel } from "../utils";
+import { dockFloatingPlayer, undockFloatingPlayer } from "../floatingPlayerDock";
 import { buildPlayerEmbedDescriptor, withPlayerSeek } from "../videoPlayer";
 
 type TaskContext = {
@@ -3681,6 +3682,7 @@ function FloatingVideoPlayer({
     }
     return createDefaultFloatingPlayerLayout(window.innerWidth, window.innerHeight);
   });
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const localFloatingVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -3759,6 +3761,20 @@ function FloatingVideoPlayer({
     setLayout(createDefaultFloatingPlayerLayout(window.innerWidth, window.innerHeight));
   }
 
+  useEffect(() => {
+    return () => undockFloatingPlayer();
+  }, []);
+
+  function handleDockToSidebar() {
+    localFloatingVideoRef.current?.pause();
+    setIsCollapsed(true);
+    dockFloatingPlayer(title, () => setIsCollapsed(false));
+  }
+
+  if (isCollapsed) {
+    return null;
+  }
+
   return (
     <div
       className="detail-floating-player"
@@ -3773,17 +3789,29 @@ function FloatingVideoPlayer({
           <span className="detail-floating-player-kicker">Player</span>
           <strong>{title}</strong>
         </div>
-        {sourceUrl && openLabel ? (
-          <a
-            className="detail-floating-player-link"
-            href={sourceUrl}
-            target="_blank"
-            rel="noreferrer"
+        <div className="detail-floating-player-actions">
+          {sourceUrl && openLabel ? (
+            <a
+              className="detail-floating-player-link"
+              href={sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {openLabel}
+            </a>
+          ) : null}
+          <button
+            type="button"
+            className="detail-floating-player-toggle"
+            aria-label="收起到侧边栏"
+            title="收起到侧边栏"
             onPointerDown={(event) => event.stopPropagation()}
+            onClick={handleDockToSidebar}
           >
-            {openLabel}
-          </a>
-        ) : null}
+            <IconDockLeft />
+          </button>
+        </div>
       </div>
       <div className="detail-video-embed-frame detail-video-embed-frame-floating">
         {localVideoUrl ? (
@@ -3868,6 +3896,17 @@ function IconChevronDown(props: SVGProps<SVGSVGElement>) {
   return (
     <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
       <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function IconDockLeft(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9.5 4v16" />
+      <path d="m17 12-4.5-4.5" />
+      <path d="m12.5 7.5 4.5 4.5-4.5 4.5" />
     </svg>
   );
 }

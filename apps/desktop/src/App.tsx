@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -15,7 +15,8 @@ import {
   type UpdateState,
 } from "./appModel";
 import { AuthRequiredError, api } from "./api";
-import { HomeIcon, KnowledgeIcon, LibraryIcon, SettingsIcon } from "./components/AppIcons";
+import { getFloatingPlayerDockState, subscribeFloatingPlayerDock } from "./floatingPlayerDock";
+import { HomeIcon, KnowledgeIcon, LibraryIcon, PlayIcon, SettingsIcon } from "./components/AppIcons";
 import { CollectionSelectDialog } from "./components/CollectionSelectDialog";
 import { CookieHelpDialog } from "./components/CookieHelpDialog";
 import { MultiPageSelectDialog } from "./components/MultiPageSelectDialog";
@@ -138,6 +139,7 @@ export function App() {
     return localStorage.getItem("sidebar-collapsed") === "true";
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const playerDock = useSyncExternalStore(subscribeFloatingPlayerDock, getFloatingPlayerDockState);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [authenticated, setAuthenticated] = useState<boolean>(() => Boolean(window.desktop));
@@ -1357,6 +1359,23 @@ export function App() {
               <strong>设置</strong>
             </span>
           </Link>
+          {playerDock.docked ? (
+            <button
+              type="button"
+              className="nav-item sidebar-player-dock"
+              aria-label="恢复悬浮播放器"
+              title={playerDock.title ? `恢复悬浮播放器：${playerDock.title}` : "恢复悬浮播放器"}
+              onClick={() => {
+                setMobileSidebarOpen(false);
+                playerDock.onRestore?.();
+              }}
+            >
+              <span className="nav-icon" aria-hidden="true"><PlayIcon /></span>
+              <span className="nav-copy">
+                <strong>播放器</strong>
+              </span>
+            </button>
+          ) : null}
         </nav>
 
         <div className="nav-section-divider"></div>

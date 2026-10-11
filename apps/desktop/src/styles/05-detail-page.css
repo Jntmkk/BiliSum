@@ -1886,6 +1886,40 @@
   text-decoration: underline;
 }
 
+.detail-floating-player-actions {
+  flex-shrink: 0;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-floating-player-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--detail-accent-border) 45%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--detail-accent);
+  cursor: pointer;
+  transition: background-color var(--transition-base), border-color var(--transition-base);
+}
+
+.detail-floating-player-toggle svg {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--transition-base);
+}
+
+.detail-floating-player-toggle:hover {
+  background: color-mix(in srgb, var(--detail-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--detail-accent) 55%, transparent);
+}
+
 .detail-video-embed-frame-floating {
   border-radius: 18px;
 }

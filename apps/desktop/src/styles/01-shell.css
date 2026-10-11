@@ -836,6 +836,28 @@
   box-shadow: none;
 }
 
+.sidebar-player-dock {
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-player-dock .nav-icon {
+  color: var(--brand-600);
+  background: var(--bg-accent-strong);
+}
+
+.sidebar-player-dock:hover .nav-icon {
+  background: var(--bg-accent);
+}
+
+[data-theme="dark"] .sidebar-player-dock .nav-icon {
+  color: var(--brand-500);
+  background: rgba(251, 114, 153, 0.2);
+}
+
 .nav-icon svg {
   width: 18px;
   height: 18px;
