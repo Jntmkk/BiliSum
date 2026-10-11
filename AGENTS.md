@@ -21,7 +21,7 @@
 push 带 * 标记的提交到 master
   → CI 运行
   → Prepare Release 自动开 "Release vX.Y.Z" PR
-  → 基线提交 CI 绿 → auto-merge-release-pr.yml 自动 squash 合并
+  → auto-merge-release-pr.yml 开启原生 auto-merge，PR 的 ci-gate 通过后 GitHub 自动合并
   → create-release-tag.yml 自动打 tag vX.Y.Z
   → release.yml 构建 Windows/mac 安装包并创建 GitHub Release
   → Release 发布事件触发 publish-docker-image.yml 推送 Docker 镜像
@@ -45,7 +45,7 @@ push 带 * 标记的提交到 master
 |---|---|
 | `ci.yml` | 测试 + 类型检查 + Docker 镜像构建验证（不推送） |
 | `prepare-release.yml` | 检测可发版提交，开 Release PR |
-| `auto-merge-release-pr.yml` | Release PR 基线 CI 绿后自动合并 |
+| `auto-merge-release-pr.yml` | Release PR 打开时开启 GitHub 原生 auto-merge（并幂等配置分支保护要求 ci-gate） |
 | `create-release-tag.yml` | Release PR 合并后打 tag |
 | `release.yml` | 构建安装包、创建 GitHub Release |
 | `publish-docker-image.yml` | 构建并推送 Docker 镜像 |

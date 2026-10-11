@@ -294,3 +294,20 @@ jobs:
           tags: bilisum:ci
           cache-from: type=gha,scope=bilisum-docker
           cache-to: type=gha,mode=min,scope=bilisum-docker
+
+  # 聚合门禁：分支保护只要求这一项。全部 job 成功（或被条件跳过）才算绿。
+  ci-gate:
+    if: always()
+    needs:
+      - detect-desktop-package-check
+      - validate
+      - validate-windows-package
+      - validate-macos-package
+      - validate-docker-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all jobs to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "${NEEDS}" | jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")' > /dev/null
