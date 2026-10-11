@@ -479,6 +479,7 @@ async function handleSettingsSubmit(event) {
     llm_provider: readTrimmedValue("llm_provider", current.llm_provider || ""),
     llm_base_url: readTrimmedValue("llm_base_url", current.llm_base_url || ""),
     llm_model: readTrimmedValue("llm_model", current.llm_model || ""),
+    llm_temperature: Number(readValue("llm_temperature", current.llm_temperature ?? 1)),
     llm_api_key: readValue("llm_api_key", current.llm_api_key || ""),
     twelvelabs_summary_enabled: readChecked("twelvelabs_summary_enabled", Boolean(current.twelvelabs_summary_enabled)),
     twelvelabs_api_key: readValue("twelvelabs_api_key", current.twelvelabs_api_key || ""),

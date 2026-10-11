@@ -79,6 +79,7 @@ function createSettings(overrides: Partial<ServiceSettings> = {}): ServiceSettin
     llm_model: "",
     llm_thinking_type: "enabled",
     llm_reasoning_effort: "low",
+    llm_temperature: 1.0,
     knowledge_llm_mode: "same_as_main",
     knowledge_llm_enabled: false,
     knowledge_llm_provider: "openai-compatible",

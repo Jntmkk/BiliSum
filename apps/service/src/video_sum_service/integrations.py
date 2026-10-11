@@ -332,7 +332,7 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
                     ],
                 },
             ],
-            "temperature": 0,
+            "temperature": effective_settings.llm_temperature,
             "max_tokens": 256,
         }
     else:
@@ -348,7 +348,7 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
                     "content": '输出 {"ok":true,"message":"test"}',
                 },
             ],
-            "temperature": 0,
+            "temperature": effective_settings.llm_temperature,
             "max_tokens": 512,
         }
     # For visual tests with images, only the real Anthropic API supports image

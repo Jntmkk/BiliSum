@@ -306,6 +306,7 @@ class PipelineSettings:
     llm_model: str = ""
     llm_thinking_type: str = "enabled"
     llm_reasoning_effort: str = "low"
+    llm_temperature: float = 1.0
     visual_evidence_enabled: bool = False
     visual_note_mode: str = "text"
     visual_multimodal_enabled: bool = False
@@ -3132,6 +3133,7 @@ class RealPipelineRunner(PipelineRunner):
         return {
             "model": self._settings.llm_model,
             "messages": messages,
+            "temperature": self._settings.llm_temperature,
             "enable_thinking": False,
             "chat_template_kwargs": {"enable_thinking": False},
         }
@@ -3147,6 +3149,7 @@ class RealPipelineRunner(PipelineRunner):
         return {
             "model": self._settings.llm_model,
             "messages": messages,
+            "temperature": self._settings.llm_temperature,
             "enable_thinking": False,
             "chat_template_kwargs": {"enable_thinking": False},
         }

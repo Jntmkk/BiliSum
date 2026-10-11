@@ -145,6 +145,7 @@ def test_serialize_settings_includes_persisted_file_flag(monkeypatch, tmp_path: 
     assert payload["settings_file_exists"] is False
     assert payload["llm_thinking_type"] == current.llm_thinking_type == "enabled"
     assert payload["llm_reasoning_effort"] == current.llm_reasoning_effort == "low"
+    assert payload["llm_temperature"] == current.llm_temperature == 1.0
     assert payload["task_concurrency"] == current.task_concurrency
     assert payload["transcription_concurrency"] == current.transcription_concurrency
     assert payload["llm_concurrency"] == current.llm_concurrency
@@ -168,6 +169,15 @@ def test_serialize_settings_includes_persisted_file_flag(monkeypatch, tmp_path: 
     payload = serialize_settings(current, environment_info={"cudaAvailable": False, "runtimeChannel": "base"})
 
     assert payload["settings_file_exists"] is True
+
+
+def test_llm_temperature_is_clamped_to_supported_range() -> None:
+    assert ServiceSettings().llm_temperature == 1.0
+    assert ServiceSettings(llm_temperature=0.5).llm_temperature == 0.5
+    assert ServiceSettings(llm_temperature=-1.0).llm_temperature == 0.0
+    assert ServiceSettings(llm_temperature=3.0).llm_temperature == 2.0
+    payload = SettingsUpdatePayload(llm_temperature=1.5)
+    assert payload.llm_temperature == 1.5
 
 
 def test_serialize_settings_masks_provider_api_keys(tmp_path: Path) -> None:

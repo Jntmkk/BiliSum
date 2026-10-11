@@ -118,6 +118,7 @@ class SettingsUpdatePayload(BaseModel):
     llm_model: str | None = None
     llm_thinking_type: str | None = None
     llm_reasoning_effort: str | None = None
+    llm_temperature: float | None = None
     llm_api_key: str | None = None
     llm_test_scope: Literal["main", "knowledge", "visual"] | None = None
     knowledge_llm_mode: str | None = None

@@ -638,6 +638,7 @@ class ServiceSettings(BaseSettings):
     llm_model: str = ""
     llm_thinking_type: str = "enabled"
     llm_reasoning_effort: str = "low"
+    llm_temperature: float = 1.0
     knowledge_llm_mode: str = "same_as_main"
     knowledge_llm_enabled: bool = False
     knowledge_llm_provider: str = "openai-compatible"
@@ -709,6 +710,15 @@ class ServiceSettings(BaseSettings):
     @classmethod
     def _normalize_llm_reasoning_effort(cls, value: str | None) -> str:
         return normalize_llm_reasoning_effort(value)
+
+    @field_validator("llm_temperature", mode="before")
+    @classmethod
+    def _clamp_llm_temperature(cls, value: object) -> float:
+        try:
+            temperature = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 1.0
+        return min(2.0, max(0.0, temperature))
 
     @field_validator("knowledge_embedding_provider", mode="before")
     @classmethod

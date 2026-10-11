@@ -250,6 +250,7 @@ export function renderSettingsView(state) {
             ${renderInput("llm_provider", "LLM Provider", settings.llm_provider || "", "text", "openai-compatible")}
             ${renderInput("llm_base_url", "LLM Base URL", settings.llm_base_url || "", "text", "https://api.openai.com/v1")}
             ${renderInput("llm_model", "LLM 模型", settings.llm_model || "", "text", "gpt-3.5-turbo")}
+            ${renderInput("llm_temperature", "LLM 温度", settings.llm_temperature ?? 1, "number", "1")}
             ${renderInput("llm_api_key", "LLM API Key", settings.llm_api_key || "", "password", "sk-...", "current-password")}
             ${renderInput("summary_chunk_target_chars", "分块目标字符数", settings.summary_chunk_target_chars || 2200, "number", "2200")}
             ${renderInput("summary_chunk_overlap_segments", "分块重叠段数", settings.summary_chunk_overlap_segments || 2, "number", "2")}

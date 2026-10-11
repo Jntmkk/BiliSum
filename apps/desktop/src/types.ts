@@ -526,6 +526,7 @@ export type ServiceSettings = {
   llm_model: string;
   llm_thinking_type: "enabled" | "disabled" | string;
   llm_reasoning_effort: "low" | "high" | "max" | string;
+  llm_temperature: number;
   llm_api_key_configured?: boolean;
   knowledge_llm_mode: string;
   knowledge_llm_enabled: boolean;

@@ -191,6 +191,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "generation", targetKey: "llm_model", title: "LLM 模型名称", description: "主摘要使用的模型名。", keywords: ["model", "模型", "gpt", "qwen", "mimo", "claude"] },
   { category: "generation", targetKey: "llm_thinking_type", title: "LLM 思考模式", description: "控制兼容模型是否启用思考输出。", keywords: ["thinking", "思考", "enabled", "disabled"] },
   { category: "generation", targetKey: "llm_reasoning_effort", title: "LLM 推理强度", description: "选择兼容模型的推理强度。", keywords: ["reasoning", "推理", "low", "high", "max"] },
+  { category: "generation", targetKey: "llm_temperature", title: "LLM 温度", description: "主摘要与连接测试使用的采样温度，范围 0.0–2.0。", keywords: ["temperature", "温度", "采样", "sampling"] },
   { category: "knowledge", targetKey: "knowledge_enabled", title: "启用知识库", description: "开启知识库索引和问答能力。", keywords: ["知识库", "knowledge", "rag", "索引", "问答"] },
   { category: "knowledge", targetKey: "knowledge_dependencies", title: "知识库依赖", description: "安装和检查知识库扩展依赖。", keywords: ["依赖", "安装", "runtime", "faiss", "向量"] },
   { category: "knowledge", targetKey: "knowledge_embedding_provider", title: "Embedding 模型来源", description: "选择向量模型的下载源：本地 HuggingFace（支持镜像）、本地 ModelScope 或硅基流动在线 API。", keywords: ["embedding", "bge", "向量", "huggingface", "modelscope", "siliconflow", "硅基流动"] },
@@ -1897,6 +1898,7 @@ export function SettingsPage({
         llm_model: form.llm_model,
         llm_thinking_type: form.llm_thinking_type || "enabled",
         llm_reasoning_effort: form.llm_reasoning_effort || "low",
+        llm_temperature: form.llm_temperature ?? 1.0,
         ...(form.llm_api_key.trim() && !isMaskedApiKey(form.llm_api_key) ? { llm_api_key: form.llm_api_key } : {}),
       };
     }
@@ -1910,6 +1912,7 @@ export function SettingsPage({
       llm_model: form.visual_evidence_model || form.llm_model,
       llm_thinking_type: form.llm_thinking_type || "enabled",
       llm_reasoning_effort: form.llm_reasoning_effort || "low",
+      llm_temperature: form.llm_temperature ?? 1.0,
       ...(!visualApiKey || isMaskedApiKey(visualApiKey)
         ? mainApiKey && !isMaskedApiKey(mainApiKey)
           ? { llm_api_key: mainApiKey }
@@ -3065,13 +3068,14 @@ export function SettingsPage({
                   </header>
                   <div className="settings-model-summary-grid">
                     <article
-                      className={`settings-model-card settings-focus-target ${activeFocusTarget === "llm_base_url" || activeFocusTarget === "llm_api_key" || activeFocusTarget === "llm_model" || activeFocusTarget === "llm_thinking_type" || activeFocusTarget === "llm_reasoning_effort" ? "is-highlighted" : ""}`}
+                      className={`settings-model-card settings-focus-target ${activeFocusTarget === "llm_base_url" || activeFocusTarget === "llm_api_key" || activeFocusTarget === "llm_model" || activeFocusTarget === "llm_thinking_type" || activeFocusTarget === "llm_reasoning_effort" || activeFocusTarget === "llm_temperature" ? "is-highlighted" : ""}`}
                       ref={(node) => {
                         registerFocusTarget("llm_base_url")(node);
                         registerFocusTarget("llm_api_key")(node);
                         registerFocusTarget("llm_model")(node);
                         registerFocusTarget("llm_thinking_type")(node);
                         registerFocusTarget("llm_reasoning_effort")(node);
+                        registerFocusTarget("llm_temperature")(node);
                       }}
                     >
                       <div className="settings-model-card-top">
@@ -5019,6 +5023,19 @@ export function SettingsPage({
                       <option value="max">Max</option>
                     </select>
                     <span className="settings-input-caption">发送 {`{"reasoning_effort":"low/high/max"}`}；默认 Low。</span>
+                  </label>
+                  <label className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_temperature" ? "is-highlighted" : ""}`}>
+                    <span className="settings-input-label">温度</span>
+                    <input
+                      className="settings-input-field"
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={form.llm_temperature ?? 1.0}
+                      onChange={(e) => updateForm({ ...form, llm_temperature: Math.min(2, Math.max(0, Number(e.target.value) || 1.0)) })}
+                    />
+                    <span className="settings-input-caption">发送 {`{"temperature":0.0-2.0}`}；默认 1.0。部分服务商模型仅允许 temperature=1。</span>
                   </label>
                   <div className={`settings-inline-alert ${llmReady ? "success" : "warning"}`}>
                     <strong>{llmReady ? "主摘要模型配置完整" : "主摘要模型仍需补全"}</strong>
