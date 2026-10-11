@@ -91,15 +91,14 @@ jobs:
       - name: Build web static assets
         run: npm run build:web
 
-      - name: Resolve Docker image repository
-        id: image
-        run: |
-          # 固定发布到阿里云容器镜像服务（杭州，命名空间 u-rep）。
-          repository="registry.cn-hangzhou.aliyuncs.com/u-rep/bilisum"
-          echo "repository=$(printf '%s' "${repository}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || 'bbmike253' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to Aliyun Container Registry
         uses: docker/login-action@v3
@@ -114,22 +113,25 @@ jobs:
           TAG: ${{ needs.resolve-tag.outputs.tag }}
           VERSION: ${{ needs.resolve-tag.outputs.version }}
           PRERELEASE: ${{ needs.resolve-tag.outputs.prerelease }}
-          REPOSITORY: ${{ steps.image.outputs.repository }}
+          HUB_REPOSITORY: bbmike253/bilisum
         run: |
           set -euo pipefail
-          base="${REPOSITORY}"
+          # 主推 Docker Hub（境外链路稳定）；阿里云为镜像副本。
+          plain="${TAG} ${VERSION}"
+          if [ "${PRERELEASE}" != "true" ]; then
+            # 稳定版更新 latest；预发布不覆盖稳定版镜像。
+            plain="${plain} latest"
+          fi
           {
-            echo "tags<<EOF"
-            echo "${base}:${TAG}"
-            echo "${base}:${VERSION}"
-            if [ "${PRERELEASE}" != "true" ]; then
-              # 稳定版更新 latest；预发布不覆盖稳定版镜像。
-              echo "${base}:latest"
-            fi
+            echo "plain_tags=${plain}"
+            echo "hub_tags<<EOF"
+            for t in ${plain}; do
+              echo "${HUB_REPOSITORY}:${t}"
+            done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image to Docker Hub
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -137,4 +139,22 @@ jobs:
           push: true
           cache-from: type=gha,scope=bilisum-docker
           cache-to: type=gha,mode=min,scope=bilisum-docker
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.tags.outputs.hub_tags }}
+
+      - name: Mirror image to Aliyun Container Registry (best effort)
+        # 跨境链路不稳定：复制失败不影响整体结果，重跑 workflow 即可补推。
+        continue-on-error: true
+        env:
+          PLAIN_TAGS: ${{ steps.tags.outputs.plain_tags }}
+          HUB_REPOSITORY: bbmike253/bilisum
+          ALIYUN_REPOSITORY: registry.cn-hangzhou.aliyuncs.com/u-rep/bilisum
+        run: |
+          set -u
+          status=0
+          for t in ${PLAIN_TAGS}; do
+            if ! docker buildx imagetools create -t "${ALIYUN_REPOSITORY}:${t}" "${HUB_REPOSITORY}:${t}"; then
+              echo "::warning::同步 tag ${t} 到阿里云失败"
+              status=1
+            fi
+          done
+          exit ${status}
