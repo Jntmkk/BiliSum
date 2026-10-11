@@ -1,0 +1,75 @@
+name: Auto Merge Release PR
+
+# Release PR（prepare-release.yml 创建，标题 "Release vX.Y.Z"）在其基线提交的
+# CI 通过后自动 squash 合并。
+#
+# 注意：Release PR 的版本 bump 提交带 [skip ci]，PR 本身不会跑 CI；版本 bump
+# 不改动代码，因此这里校验的是 release 分支基线（master 上被 bump 的那个提交）
+# 的 CI 结果。基线 CI 未通过或仍在运行时不合并，等 CI 完成后由 workflow_run
+# 触发器重试。
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge Release PR when base CI is green
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+
+          candidates=()
+          if [ "${EVENT_NAME}" = "pull_request_target" ]; then
+            case "${PR_TITLE}" in
+              "Release v"*) candidates=("${PR_NUMBER}") ;;
+              *) echo "Not a Release PR: ${PR_TITLE}"; exit 0 ;;
+            esac
+          else
+            if [ "${RUN_CONCLUSION}" != "success" ]; then
+              echo "CI conclusion is '${RUN_CONCLUSION}', nothing to do."
+              exit 0
+            fi
+            while IFS= read -r pr; do
+              [ -n "${pr}" ] && candidates+=("${pr}")
+            done < <(gh pr list --state open --json number,title \
+              --jq '.[] | select(.title | startswith("Release v")) | .number')
+          fi
+
+          if [ ${#candidates[@]} -eq 0 ]; then
+            echo "No open Release PR."
+            exit 0
+          fi
+
+          for pr in "${candidates[@]}"; do
+            head_sha="$(gh pr view "${pr}" --json headRefOid --jq .headRefOid)"
+            # Release 分支 = master + 一个版本 bump 提交，取其父提交作为 CI 基线。
+            base_sha="$(gh api "repos/${{ github.repository }}/commits/${head_sha}" --jq '.parents[0].sha')"
+            ci_conclusion="$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${base_sha}&per_page=1" \
+              --jq '.workflow_runs[0].conclusion // "none"')"
+            echo "PR #${pr}: base ${base_sha} CI conclusion = ${ci_conclusion}"
+            if [ "${ci_conclusion}" != "success" ]; then
+              echo "Skip PR #${pr}: base CI not green yet."
+              continue
+            fi
+            gh pr merge "${pr}" --squash --delete-branch
+            echo "Merged PR #${pr}."
+          done
