@@ -2,6 +2,7 @@ name: Publish Docker Image
 
 # 触发方式：
 # - push 到 master：自动构建并推送 edge 标签的镜像（不影响正式版本号镜像）
+# - GitHub Release 发布：自动构建并推送该 release tag 的镜像（稳定版附带 latest）
 # - 手动触发（workflow_dispatch）：构建并推送指定 release tag 的镜像，
 #   release_tag 留空时使用最新的已发布 release tag。
 
@@ -9,6 +10,9 @@ on:
   push:
     branches:
       - master
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       release_tag:
@@ -35,6 +39,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.release_tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -46,7 +51,9 @@ jobs:
             echo "ref=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ -n "${INPUT_TAG}" ]; then
+          if [ "${EVENT_NAME}" = "release" ]; then
+            tag="${RELEASE_TAG}"
+          elif [ -n "${INPUT_TAG}" ]; then
             tag="${INPUT_TAG}"
           else
             tag="$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName)"
