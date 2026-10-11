@@ -120,5 +120,5 @@ jobs:
           file: ./Dockerfile
           push: true
           cache-from: type=gha,scope=bilisum-docker
-          cache-to: type=gha,mode=max,scope=bilisum-docker
+          cache-to: type=gha,mode=min,scope=bilisum-docker
           tags: ${{ steps.tags.outputs.tags }}
