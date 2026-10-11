@@ -1,9 +1,14 @@
 name: Publish Docker Image
 
-# 手动触发：构建并推送 Docker 镜像到阿里云容器镜像服务。
-# release_tag 留空时使用最新的已发布 release tag。
+# 触发方式：
+# - push 到 master：自动构建并推送 edge 标签的镜像（不影响正式版本号镜像）
+# - 手动触发（workflow_dispatch）：构建并推送指定 release tag 的镜像，
+#   release_tag 留空时使用最新的已发布 release tag。
 
 on:
+  push:
+    branches:
+      - master
   workflow_dispatch:
     inputs:
       release_tag:
@@ -22,15 +27,25 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
+      ref: ${{ steps.resolve.outputs.ref }}
 
     steps:
       - name: Resolve release tag
         id: resolve
         env:
+          EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.release_tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          if [ "${EVENT_NAME}" = "push" ]; then
+            # master 推送：构建 edge 镜像，不解析 release tag，checkout 触发提交本身。
+            echo "tag=edge" >> "$GITHUB_OUTPUT"
+            echo "version=edge" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "ref=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -n "${INPUT_TAG}" ]; then
             tag="${INPUT_TAG}"
           else
@@ -42,6 +57,7 @@ jobs:
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "ref=${tag}" >> "$GITHUB_OUTPUT"
           if [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
@@ -58,7 +74,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
-          ref: ${{ needs.resolve-tag.outputs.tag }}
+          ref: ${{ needs.resolve-tag.outputs.ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
