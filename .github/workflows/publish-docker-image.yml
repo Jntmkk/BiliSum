@@ -1,6 +1,6 @@
 name: Publish Docker Image
 
-# 手动触发：构建并推送 Docker 镜像到 Docker Hub。
+# 手动触发：构建并推送 Docker 镜像到阿里云容器镜像服务。
 # release_tag 留空时使用最新的已发布 release tag。
 
 on:
@@ -78,18 +78,19 @@ jobs:
       - name: Resolve Docker image repository
         id: image
         run: |
-          # 固定发布到新的 Docker Hub 仓库，避免旧的仓库变量覆盖目标。
-          repository="lycohana/bilisum"
+          # 固定发布到阿里云容器镜像服务（杭州，命名空间 u-rep）。
+          repository="registry.cn-hangzhou.aliyuncs.com/u-rep/bilisum"
           echo "repository=$(printf '%s' "${repository}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Log in to Aliyun Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: registry.cn-hangzhou.aliyuncs.com
+          username: ${{ vars.ALIYUN_REGISTRY_USERNAME || 'tb2395355_2012' }}
+          password: ${{ secrets.ALI_DOCKER_PASSWORD }}
 
       - name: Compose Docker tags
         id: tags
@@ -100,7 +101,7 @@ jobs:
           REPOSITORY: ${{ steps.image.outputs.repository }}
         run: |
           set -euo pipefail
-          base="docker.io/${REPOSITORY}"
+          base="${REPOSITORY}"
           {
             echo "tags<<EOF"
             echo "${base}:${TAG}"
