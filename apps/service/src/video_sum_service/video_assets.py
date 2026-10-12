@@ -16,6 +16,7 @@ from video_sum_core.models.tasks import InputType
 from video_sum_core.utils import extract_bilibili_page, normalize_video_url
 from video_sum_infra.runtime import ffmpeg_location
 
+from video_sum_service.bilibili_wbi import load_bilibili_cookie_header
 from video_sum_service.context import COVER_CACHE_DIR, settings_manager
 from video_sum_service.integrations import cache_cover_image
 from video_sum_service.repository import SqliteTaskRepository
@@ -204,16 +205,260 @@ def first_non_empty(*values: str | None) -> str:
     return next((value.strip() for value in values if isinstance(value, str) and value.strip()), "")
 
 
+def _normalize_bilibili_image_url(url: str) -> str:
+    value = str(url or "").strip()
+    if value.startswith("//"):
+        return f"https:{value}"
+    return value
+
+
+# 「系列」(series) 反查的预算上限：超大系列/超多系列不能拖死 probe 请求。
+# 注意：x/series/archives 服务端每页硬上限 20 条，请求更大 page_size 无效。
+_SERIES_FALLBACK_MAX_LISTS = 10
+_SERIES_FALLBACK_MAX_PAGES_PER_LIST = 60
+_SERIES_FALLBACK_MAX_TOTAL_PAGES = 80
+_SERIES_FALLBACK_PAGE_SIZE = 20
+_SERIES_FALLBACK_PAGE_DELAY_SECONDS = 1.0
+
+
+def _fetch_bilibili_series_collection_payload(
+    normalized,
+    video_data: dict[str, object],
+) -> dict[str, object] | None:
+    """视频页没有 ugc_season 时，反查 UP 的「系列」（series）集合。
+
+    B 站视频页只暴露「合集」(ugc_season) 成员关系；「系列」成员关系
+    必须调空间接口反查：seasons_series_list 拿系列清单，再逐页翻
+    x/series/archives 定位目标视频所在的系列。
+    """
+    import random
+    import time
+
+    from video_sum_service.bilibili_wbi import WbiRiskControlError, _signed_get
+
+    owner = video_data.get("owner") if isinstance(video_data.get("owner"), dict) else {}
+    owner_mid = first_non_empty(str(owner.get("mid") or ""), str(owner.get("uid") or ""))
+    if not owner_mid:
+        return None
+    cookie_header = load_bilibili_cookie_header() or ""
+    try:
+        lists_data = _signed_get(
+            "https://api.bilibili.com/x/polymer/web-space/seasons_series_list",
+            {"mid": owner_mid, "page_num": 1, "page_size": 20},
+            cookie_header,
+        )
+    except Exception:
+        logger.warning(
+            "bilibili series fallback: list series failed mid=%s",
+            owner_mid,
+            exc_info=True,
+        )
+        return None
+
+    lists_root = lists_data.get("items_lists") if isinstance(lists_data.get("items_lists"), dict) else {}
+    series_metas: list[dict[str, object]] = []
+    for entry in lists_root.get("series_list") or []:
+        if not isinstance(entry, dict):
+            continue
+        meta = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
+        series_id = first_non_empty(str(meta.get("series_id") or ""), str(meta.get("id") or ""))
+        if series_id:
+            series_metas.append(meta)
+    # 小系列优先翻，尽快命中
+    series_metas.sort(key=lambda meta: int(meta.get("total") or 0) if str(meta.get("total") or "").isdigit() else 0)
+
+    target_bvid = normalized.canonical_id.lower()
+    found_meta: dict[str, object] | None = None
+    found_archives: list[dict[str, object]] = []
+    pages_scanned = 0
+    for meta in series_metas[:_SERIES_FALLBACK_MAX_LISTS]:
+        series_id = first_non_empty(str(meta.get("series_id") or ""), str(meta.get("id") or ""))
+        list_archives: list[dict[str, object]] = []
+        seen_bvids: set[str] = set()
+        page_total = 0
+        hit = False
+        for page_num in range(1, _SERIES_FALLBACK_MAX_PAGES_PER_LIST + 1):
+            if pages_scanned >= _SERIES_FALLBACK_MAX_TOTAL_PAGES:
+                break
+            pages_scanned += 1
+            try:
+                page_data = _signed_get(
+                    "https://api.bilibili.com/x/series/archives",
+                    {
+                        "mid": owner_mid,
+                        "series_id": series_id,
+                        # 分页参数是 pn/ps：page_num 会被静默忽略并永远回第 1 页
+                        "pn": page_num,
+                        "ps": _SERIES_FALLBACK_PAGE_SIZE,
+                        "only_normal": "true",
+                    },
+                    cookie_header,
+                )
+            except WbiRiskControlError:
+                # IP/cookie 被风控：继续扫只会加重风控，整个回退立即放弃
+                logger.warning(
+                    "bilibili series fallback: risk control hit, abort scan series_id=%s page=%s",
+                    series_id,
+                    page_num,
+                )
+                return None
+            except Exception:
+                logger.warning(
+                    "bilibili series fallback: fetch archives failed series_id=%s page=%s",
+                    series_id,
+                    page_num,
+                    exc_info=True,
+                )
+                break
+            archives = [item for item in (page_data.get("archives") or []) if isinstance(item, dict)]
+            if not archives:
+                break
+            if page_num == 1:
+                page_info = page_data.get("page") if isinstance(page_data.get("page"), dict) else {}
+                try:
+                    page_total = int(page_info.get("total") or 0)
+                except (TypeError, ValueError):
+                    page_total = 0
+            new_bvids = {
+                str(item.get("bvid") or "").strip().lower()
+                for item in archives
+            } - seen_bvids
+            if not new_bvids:
+                # 超出末页后部分实现会夹取/回绕旧数据，靠重复检测止损
+                break
+            seen_bvids.update(new_bvids)
+            list_archives.extend(archives)
+            if target_bvid in new_bvids:
+                hit = True
+            if len(archives) < _SERIES_FALLBACK_PAGE_SIZE:
+                break
+            if page_total and page_num * _SERIES_FALLBACK_PAGE_SIZE >= page_total:
+                break
+            # 命中后仍翻完本系列（补齐 items），但请求间留间隔防风控
+            time.sleep(_SERIES_FALLBACK_PAGE_DELAY_SECONDS + random.random() * 0.6)
+        if hit and list_archives:
+            found_meta, found_archives = meta, list_archives
+            break
+        time.sleep(_SERIES_FALLBACK_PAGE_DELAY_SECONDS)
+    if found_meta is None:
+        return None
+
+    items: list[dict[str, object]] = []
+    for archive in found_archives:
+        bvid = str(archive.get("bvid") or "").strip()
+        if not bvid:
+            continue
+        try:
+            duration = float(archive["duration"]) if archive.get("duration") is not None else None
+        except (TypeError, ValueError):
+            duration = None
+        items.append(
+            {
+                "position": len(items) + 1,
+                "bvid": bvid,
+                "title": first_non_empty(str(archive.get("title") or ""), bvid),
+                "source_url": f"https://www.bilibili.com/video/{bvid}/",
+                "cover_url": _normalize_bilibili_image_url(str(archive.get("pic") or "")),
+                "duration": duration,
+                "source_section_id": None,
+                "source_section_title": None,
+                "source_section_position": 1,
+                "is_current": bvid.lower() == target_bvid,
+            }
+        )
+    if len(items) < 2:
+        return None
+
+    collection_id = f"series-{first_non_empty(str(found_meta.get('series_id') or ''), str(found_meta.get('id') or ''))}"
+    collection_referer = f"https://www.bilibili.com/video/{normalized.canonical_id}/"
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def cache_collection_item(item: dict[str, object]) -> dict[str, object]:
+        cover_url = str(item.get("cover_url") or "").strip()
+        if cover_url:
+            item["cover_url"] = cache_cover_image(
+                cover_url,
+                f"collection-{collection_id}-{str(item.get('bvid') or 'video')}",
+                referer_url=str(item.get("source_url") or collection_referer),
+            )
+        return item
+
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="bilibili-cover") as executor:
+        items = list(executor.map(cache_collection_item, items))
+
+    collection_cover_url = first_non_empty(
+        _normalize_bilibili_image_url(str(found_meta.get("cover") or "")),
+        _normalize_bilibili_image_url(str(video_data.get("pic") or "")),
+    )
+    cached_collection_cover = cache_cover_image(
+        collection_cover_url,
+        f"collection-{collection_id}",
+        referer_url=collection_referer,
+    )
+    owner_name = first_non_empty(str(owner.get("name") or ""), str(owner.get("uname") or ""))
+    owner_face = first_non_empty(str(owner.get("face") or ""), str(owner.get("avatar") or ""))
+    cached_owner_face = cache_cover_image(
+        owner_face,
+        f"collection-{collection_id}-owner",
+        referer_url=collection_referer,
+    ) if owner_face else ""
+    return {
+        "collection_id": collection_id,
+        "title": first_non_empty(str(found_meta.get("name") or ""), "Bilibili 系列"),
+        "cover_url": cached_collection_cover,
+        "owner_mid": owner_mid or None,
+        "owner_name": owner_name or None,
+        "owner_face": cached_owner_face or owner_face or None,
+        "owner_url": f"https://space.bilibili.com/{owner_mid}" if owner_mid else None,
+        "item_count": len(items),
+        "items": items,
+    }
+
+
 def _fetch_bilibili_initial_state_payload(url: str) -> dict[str, object]:
     import httpx
 
-    try:
-        response = httpx.get(
+    # 数据中心 IP 匿名请求视频页会被风控（412）；带上用户登录态 cookies
+    # （与 yt-dlp 下载用同一份 cookie 文件）即可正常拿到 __INITIAL_STATE__。
+    # 412 对该 IP 是间歇性的，重试几次基本都能成功。
+    headers = dict(_BILIBILI_HTTP_HEADERS)
+    cookie_header = load_bilibili_cookie_header()
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+
+    response: httpx.Response | None = None
+    for attempt in range(5):
+        try:
+            response = httpx.get(
+                url,
+                headers=headers,
+                follow_redirects=True,
+                timeout=30.0,
+            )
+            if response.status_code != 412:
+                break
+        except httpx.HTTPError:
+            logger.warning(
+                "failed to fetch bilibili page payload (attempt %d/5): %s",
+                attempt + 1,
+                url,
+                exc_info=True,
+            )
+            response = None
+        if attempt < 4:
+            import time
+
+            time.sleep(3 * (attempt + 1))
+    if response is None:
+        return {}
+    if response.status_code != 200:
+        logger.warning(
+            "bilibili page fetch status=%s url=%s",
+            response.status_code,
             url,
-            headers=_BILIBILI_HTTP_HEADERS,
-            follow_redirects=True,
-            timeout=30.0,
         )
+    try:
         response.raise_for_status()
     except httpx.HTTPError:
         logger.warning("failed to fetch bilibili page payload: %s", url, exc_info=True)
@@ -251,13 +496,20 @@ def fetch_bilibili_collection_payload(url: str) -> dict[str, object] | None:
     if normalized.platform != "bilibili":
         return None
 
-    payload = _fetch_bilibili_initial_state_payload(normalized.normalized_url)
+    # B 站 WAF 对无尾斜杠的 /video/BVxxx 重定向链一律返回 412，
+    # 带尾斜杠则正常——normalize 产物不含斜杠，这里补回。
+    page_url = normalized.normalized_url
+    if not page_url.endswith("/"):
+        page_url = f"{page_url}/"
+
+    payload = _fetch_bilibili_initial_state_payload(page_url)
     video_data = payload.get("videoData") or {}
     if not isinstance(video_data, dict):
         return None
     season = video_data.get("ugc_season")
     if not isinstance(season, dict):
-        return None
+        # 「系列」(series) 不出现在视频页，回退反查 UP 空间接口
+        return _fetch_bilibili_series_collection_payload(normalized, video_data)
 
     collection_id = str(season.get("id") or season.get("season_id") or "").strip()
     if not collection_id:
