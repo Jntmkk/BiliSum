@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,7 @@ from threading import Lock
 from uuid import uuid4
 
 from video_sum_core.models.tasks import TaskInput, TaskResult, TaskStatus
+from video_sum_core.utils import normalize_video_url
 from video_sum_infra.db import sqlite_cursor
 from video_sum_service.schemas import (
     KnowledgeIndexChunkRecord,
@@ -22,6 +24,18 @@ from video_sum_service.schemas import (
 )
 
 _UNSET = object()
+
+
+def _collection_current_bvid(source_url: str) -> str:
+    """从合集来源视频 URL 解析当前视频 bvid（小写），用于标记 is_current。"""
+    text = str(source_url or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(normalize_video_url(text).canonical_id or "").lower()
+    except Exception:
+        match = re.search(r"(BV[0-9A-Za-z]+)", text)
+        return match.group(1).lower() if match else ""
 
 
 class SqliteTaskRepository:
@@ -2335,8 +2349,10 @@ class SqliteTaskRepository:
                 (collection_id,),
             ).fetchall()
         response_items: list[VideoCollectionItemResponse] = []
+        current_bvid = _collection_current_bvid(str(collection["source_url"] or ""))
         for row in items:
             asset = self.get_video_asset(str(row["video_id"])) if row["video_id"] else None
+            row_bvid = str(row["bvid"])
             response_items.append(
                 VideoCollectionItemResponse(
                     position=int(row["position"] or 0),
@@ -2345,7 +2361,7 @@ class SqliteTaskRepository:
                         if row["custom_position"] is not None
                         else None
                     ),
-                    bvid=str(row["bvid"]),
+                    bvid=row_bvid,
                     title=str(row["title"] or row["bvid"]),
                     source_url=str(row["source_url"] or ""),
                     cover_url=str(row["cover_url"] or ""),
@@ -2363,6 +2379,7 @@ class SqliteTaskRepository:
                     last_summary_at=asset.last_summary_at if asset else None,
                     asset_updated_at=asset.updated_at if asset else None,
                     is_global_visible=bool(asset and asset.is_global_visible),
+                    is_current=bool(current_bvid) and row_bvid.lower() == current_bvid,
                 )
             )
         pending_items = [
