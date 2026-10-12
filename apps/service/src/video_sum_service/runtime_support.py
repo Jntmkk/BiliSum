@@ -2302,6 +2302,12 @@ def serialize_settings(
         "ytdlp_cookies_browser": current_settings.ytdlp_cookies_browser,
         "up_dynamics_enabled": current_settings.up_dynamics_enabled,
         "up_dynamics_poll_interval_seconds": current_settings.up_dynamics_poll_interval_seconds,
+        "oss_bucket": current_settings.oss_bucket,
+        "oss_endpoint": current_settings.oss_endpoint,
+        "oss_access_key_id": current_settings.oss_access_key_id,
+        "oss_access_key_secret": "",
+        "oss_access_key_secret_configured": bool(current_settings.oss_access_key_secret),
+        "oss_public_base_url": current_settings.oss_public_base_url,
         "settings_file_exists": settings_manager.has_persisted_settings,
         "defaults": {
             "knowledge_note_system_prompt": DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,

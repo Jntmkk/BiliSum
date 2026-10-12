@@ -615,6 +615,12 @@ export type ServiceSettings = {
   ytdlp_cookies_browser: string;
   up_dynamics_enabled: boolean;
   up_dynamics_poll_interval_seconds: number;
+  oss_bucket: string;
+  oss_endpoint: string;
+  oss_access_key_id: string;
+  oss_access_key_secret: string;
+  oss_access_key_secret_configured: boolean;
+  oss_public_base_url: string;
   settings_file_exists?: boolean;
   defaults?: {
     knowledge_note_system_prompt?: string;

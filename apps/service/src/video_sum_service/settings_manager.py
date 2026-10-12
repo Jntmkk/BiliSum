@@ -37,6 +37,7 @@ SECRET_SETTINGS_FIELDS = {
     "siliconflow_embedding_api_key",
     "visual_evidence_api_key",
     "twelvelabs_api_key",
+    "oss_access_key_secret",
 }
 MASKED_SECRET_PLACEHOLDER = "******"
 SETTINGS_SCHEMA_VERSION = 2
@@ -158,6 +159,11 @@ class SettingsUpdatePayload(BaseModel):
     ytdlp_cookies_browser: str | None = None
     up_dynamics_enabled: bool | None = None
     up_dynamics_poll_interval_seconds: int | None = None
+    oss_bucket: str | None = None
+    oss_endpoint: str | None = None
+    oss_access_key_id: str | None = None
+    oss_access_key_secret: str | None = None
+    oss_public_base_url: str | None = None
 
 
 class SettingsManager:

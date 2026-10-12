@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import FileResponse, RedirectResponse
 
 from video_sum_service import bilibili_wbi
+from video_sum_service.bilibili_cookies import BILIBILI_BROWSER_HEADERS
 from video_sum_service.bilibili_wbi import (
     CookieInvalidError,
     CookieMissingError,
@@ -207,6 +216,128 @@ def refresh_dynamics(request: Request) -> UpDynamicsRefreshResponse:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="动态监控服务未启动。")
     watcher.refresh_now()
     return UpDynamicsRefreshResponse(accepted=True)
+
+
+_IMAGE_PROXY_HOST_SUFFIXES = (
+    "hdslb.com",
+    "bilivideo.com",
+    "biliimg.net",
+    "acgvideo.com",
+    "bilibili.com",
+)
+_IMAGE_PROXY_CACHE_TTL_SECONDS = 7 * 24 * 3600
+_IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
+_OSS_KEY_PREFIX = "up-images"
+_OSS_CLIENT_CACHE: dict[tuple[str, str, str, str], object] = {}
+
+
+def _image_cache_dir(request: Request) -> Path:
+    cache_dir = Path(settings_manager.current.cache_dir) / "up-images"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def _is_proxyable_image_host(hostname: str) -> bool:
+    host = hostname.lower().strip(".")
+    return any(host == suffix or host.endswith(f".{suffix}") for suffix in _IMAGE_PROXY_HOST_SUFFIXES)
+
+
+def _oss_config(current: object) -> tuple[str, str, str, str, str] | None:
+    """返回 (bucket, endpoint, ak, sk, public_base)；未配置完整时返回 None。"""
+    bucket = str(getattr(current, "oss_bucket", "") or "").strip()
+    endpoint = str(getattr(current, "oss_endpoint", "") or "").strip()
+    ak = str(getattr(current, "oss_access_key_id", "") or "").strip()
+    sk = str(getattr(current, "oss_access_key_secret", "") or "").strip()
+    if not (bucket and endpoint and ak and sk):
+        return None
+    public_base = str(getattr(current, "oss_public_base_url", "") or "").strip()
+    if not public_base:
+        public_base = f"https://{bucket}.{endpoint}"
+    return bucket, endpoint, ak, sk, public_base.rstrip("/")
+
+
+def _oss_upload(config: tuple[str, str, str, str, str], object_key: str, content: bytes, content_type: str) -> bool:
+    try:
+        import oss2  # type: ignore[import-not-found]
+    except ImportError:
+        return False
+    bucket_name, endpoint, ak, sk, _public_base = config
+    client_key = (bucket_name, endpoint, ak, sk)
+    try:
+        bucket = _OSS_CLIENT_CACHE.get(client_key)
+        if bucket is None:
+            bucket = oss2.Bucket(oss2.Auth(ak, sk), f"https://{endpoint}", bucket_name)
+            _OSS_CLIENT_CACHE[client_key] = bucket
+        bucket.put_object(object_key, content, headers={"Content-Type": content_type})
+        return True
+    except Exception:  # noqa: BLE001 - 上游 OSS 故障时回退本地缓存
+        _OSS_CLIENT_CACHE.pop(client_key, None)
+        return False
+
+
+@router.get("/image-proxy")
+def proxy_dynamics_image(url: str, request: Request) -> FileResponse:
+    """代理 B 站图片（头像/封面），绕开 hdslb 防盗链；配置 OSS 时转存并 302 跳转。"""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname or not _is_proxyable_image_host(parsed.hostname):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的图片地址。")
+
+    cache_dir = _image_cache_dir(request)
+    key = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    image_path = cache_dir / key
+    meta_path = cache_dir / f"{key}.json"
+
+    fresh = (
+        image_path.exists()
+        and meta_path.exists()
+        and (time.time() - image_path.stat().st_mtime) < _IMAGE_PROXY_CACHE_TTL_SECONDS
+    )
+    if not fresh:
+        try:
+            response = httpx.get(
+                url,
+                headers=BILIBILI_BROWSER_HEADERS,
+                timeout=15.0,
+                follow_redirects=True,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"图片拉取失败：{exc}"
+            ) from exc
+        content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if response.status_code != 200 or not content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"上游图片不可用（HTTP {response.status_code}）。",
+            )
+        if len(response.content) > _IMAGE_PROXY_MAX_BYTES:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="图片超出大小限制。")
+        tmp_path = image_path.with_suffix(".tmp")
+        tmp_path.write_bytes(response.content)
+        tmp_path.replace(image_path)
+        meta: dict[str, str] = {"content_type": content_type}
+        oss = _oss_config(settings_manager.current)
+        if oss is not None:
+            object_key = f"{_OSS_KEY_PREFIX}/{key}"
+            if _oss_upload(oss, object_key, response.content, content_type):
+                meta["oss_url"] = f"{oss[4]}/{object_key}"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    meta: dict[str, object] = {}
+    content_type = "application/octet-stream"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        content_type = str(meta.get("content_type") or content_type)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    oss_url = str(meta.get("oss_url") or "").strip()
+    if oss_url:
+        return RedirectResponse(oss_url, status_code=status.HTTP_302_FOUND)
+    return FileResponse(
+        image_path,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.post("/feed/{detection_id}/summarize", response_model=UpDetectedVideoResponse)

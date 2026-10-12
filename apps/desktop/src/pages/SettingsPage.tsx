@@ -150,6 +150,7 @@ function maskConfiguredApiKeys(settings: ServiceSettings | null): ServiceSetting
     siliconflow_embedding_api_key: settings.siliconflow_embedding_api_key_configured ? MASKED_API_KEY : settings.siliconflow_embedding_api_key,
     visual_evidence_api_key: settings.visual_evidence_api_key_configured ? MASKED_API_KEY : settings.visual_evidence_api_key,
     twelvelabs_api_key: settings.twelvelabs_api_key_configured ? MASKED_API_KEY : settings.twelvelabs_api_key,
+    oss_access_key_secret: settings.oss_access_key_secret_configured ? MASKED_API_KEY : settings.oss_access_key_secret,
   };
 }
 
@@ -1572,6 +1573,9 @@ export function SettingsPage({
     if (nextForm.twelvelabs_api_key_configured && (!String(nextForm.twelvelabs_api_key || "").trim() || isMaskedApiKey(nextForm.twelvelabs_api_key))) {
       delete payload.twelvelabs_api_key;
     }
+    if (nextForm.oss_access_key_secret_configured && (!String(nextForm.oss_access_key_secret || "").trim() || isMaskedApiKey(nextForm.oss_access_key_secret))) {
+      delete payload.oss_access_key_secret;
+    }
     if (nextForm.siliconflow_embedding_api_key_configured && (!String(nextForm.siliconflow_embedding_api_key || "").trim() || isMaskedApiKey(nextForm.siliconflow_embedding_api_key))) {
       delete payload.siliconflow_embedding_api_key;
     }
@@ -2778,6 +2782,31 @@ export function SettingsPage({
                   <span className="settings-input-label">UP 动态轮询间隔（秒）</span>
                   <input className="settings-input-field" type="number" min={60} max={3600} value={form.up_dynamics_poll_interval_seconds || 600} onChange={(e) => updateForm({ ...form, up_dynamics_poll_interval_seconds: Number(e.target.value) })} />
                   <span className="settings-input-caption">服务端每隔该时长检查一轮订阅 UP 的新投稿，范围 60-3600 秒，默认 600 秒（10 分钟）。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("oss_bucket") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">阿里云 OSS Bucket</span>
+                  <input className="settings-input-field" type="text" value={form.oss_bucket || ""} onChange={(e) => updateForm({ ...form, oss_bucket: e.target.value })} placeholder="如 bilisum-images" />
+                  <span className="settings-input-caption">填写 Bucket、Endpoint、AccessKey 后，UP 动态的头像/封面会自动转存到 OSS 并直接走 OSS 加载，绕开 B 站防盗链；留空则使用服务端本地缓存。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("oss_endpoint") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">OSS Endpoint</span>
+                  <input className="settings-input-field" type="text" value={form.oss_endpoint || ""} onChange={(e) => updateForm({ ...form, oss_endpoint: e.target.value })} placeholder="如 oss-cn-hangzhou.aliyuncs.com" />
+                  <span className="settings-input-caption">Bucket 所在地域节点，在 OSS 控制台 Bucket 概览页可见。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("oss_access_key_id") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">OSS AccessKey ID</span>
+                  <input className="settings-input-field" type="text" value={form.oss_access_key_id || ""} onChange={(e) => updateForm({ ...form, oss_access_key_id: e.target.value })} placeholder="LTAI..." />
+                  <span className="settings-input-caption">建议使用 RAM 子账号，仅授权该 Bucket 的读写权限。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("oss_access_key_secret") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">OSS AccessKey Secret</span>
+                  <input className="settings-input-field" type="password" value={form.oss_access_key_secret || ""} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, oss_access_key_secret: e.target.value })} autoComplete="new-password" />
+                  <span className="settings-input-caption">{form.oss_access_key_secret_configured ? "已配置，保持 ****** 不变；输入新值可替换。" : "仅保存在服务端，不会回显。"}</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("oss_public_base_url") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">OSS 公共访问域名（可选）</span>
+                  <input className="settings-input-field" type="text" value={form.oss_public_base_url || ""} onChange={(e) => updateForm({ ...form, oss_public_base_url: e.target.value })} placeholder="留空默认 https://{Bucket}.{Endpoint}" />
+                  <span className="settings-input-caption">Bucket 为公共读时留空即可；绑定了 CDN/自定义域名时填写，如 https://img.example.com。</span>
                 </label>
               </div>
             </section>

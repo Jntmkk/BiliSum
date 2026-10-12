@@ -2,7 +2,17 @@ import hashlib
 import urllib.parse
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from video_sum_service import bilibili_wbi as wbi
+
+
+@pytest.fixture(autouse=True)
+def _fresh_signer_cache():
+    """模块级签名器带内存缓存，测试间必须清空，否则 nav 请求被缓存跳过。"""
+    wbi._signer.invalidate()
+    yield
+    wbi._signer.invalidate()
 
 
 def test_mixin_table_has_64_entries():

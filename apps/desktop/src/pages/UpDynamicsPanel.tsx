@@ -37,6 +37,24 @@ function taskBadgeClass(taskStatus: string | null): string {
   return "is-running";
 }
 
+const BILIBILI_IMAGE_HOST_PATTERN = /(^|\.)((hdslb|bilivideo|biliimg|acgvideo)\.com)$/i;
+
+function proxiedImageUrl(url: string): string {
+  if (!url) {
+    return url;
+  }
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return url;
+  }
+  if (!BILIBILI_IMAGE_HOST_PATTERN.test(host)) {
+    return url;
+  }
+  return `/api/v1/dynamics/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
 type UpDynamicsPanelProps = {
   active: boolean;
   onUnreadChange(count: number): void;
@@ -330,7 +348,7 @@ export function UpDynamicsPanel({ active, onUnreadChange }: UpDynamicsPanelProps
                     onClick={() => setFilterSubscriptionId(isFiltering ? null : subscription.subscription_id)}
                   >
                     {subscription.up_face_url ? (
-                      <img className="up-dynamics-chip-face" src={subscription.up_face_url} alt="" loading="lazy" />
+                      <img className="up-dynamics-chip-face" src={proxiedImageUrl(subscription.up_face_url)} alt="" loading="lazy" />
                     ) : (
                       <span className="up-dynamics-chip-face is-placeholder">{(subscription.up_name || "?").slice(0, 1)}</span>
                     )}
@@ -418,7 +436,7 @@ export function UpDynamicsPanel({ active, onUnreadChange }: UpDynamicsPanelProps
                     rel="noreferrer"
                     title="在 B 站打开"
                   >
-                    {detection.cover_url ? <img src={detection.cover_url} alt="" loading="lazy" /> : null}
+                    {detection.cover_url ? <img src={proxiedImageUrl(detection.cover_url)} alt="" loading="lazy" /> : null}
                     {detection.duration ? <span className="up-dynamics-item-duration">{formatDuration(detection.duration)}</span> : null}
                   </a>
                   <div className="up-dynamics-item-body">

@@ -682,6 +682,12 @@ class ServiceSettings(BaseSettings):
     # UP 主动态监控：默认关闭；轮询间隔钳制在 60-3600 秒。
     up_dynamics_enabled: bool = False
     up_dynamics_poll_interval_seconds: int = 600
+    # 阿里云 OSS 图片转存（UP 动态头像/封面绕防盗链）。任一必填项留空则回退本地磁盘缓存。
+    oss_bucket: str = ""
+    oss_endpoint: str = ""
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
+    oss_public_base_url: str = ""
 
     model_config = SettingsConfigDict(
         env_prefix="VIDEO_SUM_",
