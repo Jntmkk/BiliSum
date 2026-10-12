@@ -31,6 +31,7 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { CollectionDetailPage } from "./pages/CollectionDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
+import { generateUuid } from "./utils";
 import type { CollectionGroupMode, CollectionSortMode, VideoAssetSummary, VideoCollection, VideoCollectionItem, VideoPageBatchOption, VideoProbeResult } from "./types";
 
 const PROMPT_PRESET_STORAGE_KEY = "bilisum.promptPresetId";
@@ -780,7 +781,7 @@ export function App() {
       visualNoteMode: taskPayload.visual_note_mode,
       promptPresetId: taskPayload.prompt_preset_id,
     });
-    const batchId = collectionBatchRetryIdsRef.current.get(batchKey) || crypto.randomUUID();
+    const batchId = collectionBatchRetryIdsRef.current.get(batchKey) || generateUuid();
     collectionBatchRetryIdsRef.current.set(batchKey, batchId);
     const result = await api.createVideoCollectionTasks(collectionId, {
       batch_id: batchId,

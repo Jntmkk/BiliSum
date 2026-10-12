@@ -858,12 +858,14 @@ export const api = {
   createUpSubscription(query: string) {
     return fetchJson<UpSubscription>("/api/v1/dynamics/subscriptions", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query }),
     });
   },
   updateUpSubscription(subscriptionId: string, patch: { enabled?: boolean }) {
     return fetchJson<UpSubscription>(`/api/v1/dynamics/subscriptions/${subscriptionId}`, {
       method: "PATCH",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
   },
@@ -894,6 +896,7 @@ export const api = {
   markUpDynamicsRead(body: { detection_ids?: string[]; subscription_id?: string; mark_all?: boolean }) {
     return fetchJson<{ unread_count: number }>("/api/v1/dynamics/feed/read", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   },
