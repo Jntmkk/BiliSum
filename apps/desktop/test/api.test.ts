@@ -101,6 +101,7 @@ run("calls markdown and transcript export APIs", async () => {
     visual_note_mode: "frame_insert",
     prompt_preset_id: "general",
     summary_scope: "summary",
+    schedule: "offpeak",
   });
 
   assert.equal(requests[2]?.url, "/api/v1/prompts/presets");
@@ -134,7 +135,25 @@ run("calls markdown and transcript export APIs", async () => {
     visual_note_mode: "frame_insert",
     prompt_preset_id: "general",
     summary_scope: "summary",
+    schedule: "offpeak",
   });
+
+  await api.createVideoTasksBatch("video-1", {
+    page_numbers: [1, 2],
+    confirm: false,
+    schedule: "offpeak",
+  });
+  assert.equal(requests[15]?.url, "/api/v1/videos/video-1/tasks/batch");
+  assert.equal(requests[15]?.options?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requests[15]?.options?.body)), {
+    page_numbers: [1, 2],
+    confirm: false,
+    schedule: "offpeak",
+  });
+
+  await api.runTaskNow("task-9");
+  assert.equal(requests[16]?.url, "/api/v1/tasks/task-9/run-now");
+  assert.equal(requests[16]?.options?.method, "POST");
 
   globalThis.fetch = originalFetch;
   globalThis.window = originalWindow;

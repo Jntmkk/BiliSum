@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from threading import Event, Lock, Thread
 from typing import Any
 
-from video_sum_core.models.tasks import InputType, TaskInput
+from video_sum_core.models.tasks import InputType, TaskInput, TaskOptions
 from video_sum_service import bilibili_wbi
 from video_sum_service.bilibili_wbi import (
     CookieInvalidError,
@@ -107,6 +107,7 @@ class UpDynamicsWatcher:
                 pubdate=int(detection.get("pubdate") or 0),
                 description=str(detection.get("description") or ""),
             ),
+            use_offpeak_default=False,
         )
         if task_id:
             self._repository.update_up_detected_video(
@@ -278,13 +279,24 @@ class UpDynamicsWatcher:
         )
         return self._repository.upsert_video_asset(asset)
 
-    def _submit_summary_task(self, asset: VideoAssetRecord, item: UpVideoItem) -> str | None:
+    def _submit_summary_task(
+        self,
+        asset: VideoAssetRecord,
+        item: UpVideoItem,
+        *,
+        use_offpeak_default: bool = True,
+    ) -> str | None:
+        settings = self._settings_manager.current
+        schedule = "offpeak" if (
+            use_offpeak_default and bool(getattr(settings, "offpeak_schedule_default", False))
+        ) else "immediate"
         record = TaskRecord(
             task_input=TaskInput(
                 input_type=InputType.URL,
                 source=f"https://www.bilibili.com/video/{item.bvid}/",
                 title=item.title,
                 platform_hint="bilibili",
+                options=TaskOptions(schedule=schedule),
             ),
             video_id=asset.video_id,
             page_title=item.title,

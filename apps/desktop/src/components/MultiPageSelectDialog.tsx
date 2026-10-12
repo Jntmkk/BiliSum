@@ -14,7 +14,7 @@ type MultiPageSelectDialogProps = {
   video: VideoAssetSummary | null;
   pages: VideoPageBatchOption[];
   onClose(): void;
-  onSubmit(input: { pageNumbers: number[]; confirm: boolean }): Promise<VideoTaskBatchResponse>;
+  onSubmit(input: { pageNumbers: number[]; confirm: boolean; schedule?: "immediate" | "offpeak" }): Promise<VideoTaskBatchResponse>;
 };
 
 function aggregateStatusLabel(status?: PageAggregateStatus) {
@@ -42,12 +42,14 @@ export function MultiPageSelectDialog({
   const [selectedPages, setSelectedPages] = useState<number[]>([]);
   const [confirmation, setConfirmation] = useState<VideoTaskBatchResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [schedule, setSchedule] = useState<"immediate" | "offpeak">("offpeak");
 
   useEffect(() => {
     if (!isOpen) {
       setSelectedPages([]);
       setConfirmation(null);
       setSubmitting(false);
+      setSchedule("offpeak");
     }
   }, [isOpen]);
 
@@ -80,7 +82,11 @@ export function MultiPageSelectDialog({
     }
     setSubmitting(true);
     try {
-      const response = await onSubmit({ pageNumbers: selectedPages, confirm });
+      const response = await onSubmit({
+        pageNumbers: selectedPages,
+        confirm,
+        schedule: mode === "create" ? schedule : undefined,
+      });
       if (response.requires_confirmation) {
         setConfirmation(response);
       }
@@ -168,6 +174,17 @@ export function MultiPageSelectDialog({
             <>
               <div className="multi-page-toolbar">
                 <span className="multi-page-toolbar-copy">已选 {selectedCount} / {pages.length}</span>
+                {mode === "create" ? (
+                  <label className="multi-page-schedule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={schedule === "offpeak"}
+                      onChange={(event) => setSchedule(event.target.checked ? "offpeak" : "immediate")}
+                    />
+                    <span>低峰期执行（推荐，省 50%）</span>
+                    {schedule === "offpeak" ? <small>仅高峰时段暂停，闲时立即执行</small> : null}
+                  </label>
+                ) : null}
                 <div className="multi-page-toolbar-actions">
                   <button
                     className="secondary-button"

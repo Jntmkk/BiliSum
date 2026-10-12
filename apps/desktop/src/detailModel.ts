@@ -108,7 +108,7 @@ export function taskPageLabel(task: Pick<TaskSummary, "page_number" | "page_titl
 }
 
 export function derivePageAggregateStatus(tasks: TaskSummary[]): PageAggregateStatus {
-  if (tasks.some((task) => task.status === "running" || task.status === "queued")) {
+  if (tasks.some((task) => task.status === "running" || task.status === "queued" || task.status === "waiting_offpeak")) {
     return "in_progress";
   }
   if (tasks.some((task) => task.status === "completed")) {

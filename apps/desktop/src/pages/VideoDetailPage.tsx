@@ -1680,7 +1680,22 @@ export function VideoDetailPage({ refreshToken = 0, onRefresh, onOpenCookieSetti
     }
   }
 
-  async function handleSubmitBatchAction(input: { pageNumbers: number[]; confirm: boolean }): Promise<VideoTaskBatchResponse> {
+  async function handleRunTaskNow() {
+    if (!selectedTaskId) {
+      return;
+    }
+    const taskId = selectedTaskId;
+    setStatus("正在立即执行该任务...");
+    try {
+      await api.runTaskNow(taskId);
+      await refreshDetail({ forceTaskIds: [taskId], preferredTaskId: taskId, syncLibrary: true });
+      setStatus("任务已恢复执行");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "立即执行失败");
+    }
+  }
+
+  async function handleSubmitBatchAction(input: { pageNumbers: number[]; confirm: boolean; schedule?: "immediate" | "offpeak" }): Promise<VideoTaskBatchResponse> {
     if (!video) {
       throw new Error("当前视频信息不可用，请稍后重试。");
     }
@@ -1695,6 +1710,7 @@ export function VideoDetailPage({ refreshToken = 0, onRefresh, onOpenCookieSetti
       ? await api.createVideoTasksBatch(video.video_id, {
         page_numbers: input.pageNumbers,
         confirm: input.confirm,
+        schedule: input.schedule ?? null,
       })
       : await api.resummarizeVideoTasksBatch(video.video_id, {
         page_numbers: input.pageNumbers,
@@ -2532,6 +2548,15 @@ export function VideoDetailPage({ refreshToken = 0, onRefresh, onOpenCookieSetti
                     <span className="detail-workspace-signal-dot" />
                     {workspaceStatusLabel}
                   </span>
+                ) : null}
+                {selectedTaskStatus === "waiting_offpeak" ? (
+                  <button
+                    className="detail-action-button secondary detail-action-button-compact"
+                    type="button"
+                    onClick={() => void handleRunTaskNow()}
+                  >
+                    立即执行
+                  </button>
                 ) : null}
                 {selectedTaskCode ? <span>任务 {selectedTaskCode}</span> : null}
                 {selectedTaskTokenCount != null ? (

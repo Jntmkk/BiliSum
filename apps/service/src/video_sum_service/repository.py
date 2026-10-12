@@ -1553,6 +1553,23 @@ class SqliteTaskRepository:
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
+    def list_offpeak_waiting_tasks(self) -> list[TaskRecord]:
+        """所有等待低峰期恢复 LLM 阶段的任务（由 OffPeakScheduler 消费）。"""
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT
+                    t.task_id, t.video_id, t.status, t.task_input_json, t.page_number, t.page_title,
+                    NULL AS result_json, t.error_code,
+                    t.error_message, t.created_at, t.updated_at
+                FROM tasks t
+                WHERE t.status = ?
+                ORDER BY t.created_at ASC, t.task_id ASC
+                """,
+                (TaskStatus.WAITING_OFFPEAK.value,),
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def list_tasks_for_video(self, video_id: str) -> list[TaskRecord]:
         with self._lock, sqlite_cursor(self._connection) as cursor:
             asset_row = cursor.execute(

@@ -328,6 +328,7 @@ def _create_video_task_record(
     visual_note_mode: str | None = None,
     prompt_preset_id: str | None = None,
     summary_scope: str | None = None,
+    schedule: str | None = None,
 ):
     record = _build_video_task_record(
         video=video,
@@ -335,6 +336,7 @@ def _create_video_task_record(
         visual_note_mode=visual_note_mode,
         prompt_preset_id=prompt_preset_id,
         summary_scope=summary_scope,
+        schedule=schedule,
     )
     record = task_store.create_task_record(record)
     submit_task_or_queue(app_state, task_store, record)
@@ -350,6 +352,7 @@ def _build_video_task_record(
     visual_note_mode: str | None = None,
     prompt_preset_id: str | None = None,
     summary_scope: str | None = None,
+    schedule: str | None = None,
 ) -> TaskRecord:
     page = resolve_video_page(video, page_number)
     if video.pages and page_number is not None and page is None:
@@ -358,7 +361,7 @@ def _build_video_task_record(
     source_url = page.source_url if page else video.source_url
     title = page.title if page else video.title
     logger.info(
-        "create video task video_id=%s page=%s title=%s source=%s visual_note_mode=%s prompt_preset_id=%s summary_scope=%s",
+        "create video task video_id=%s page=%s title=%s source=%s visual_note_mode=%s prompt_preset_id=%s summary_scope=%s schedule=%s",
         video.video_id,
         page.page if page else None,
         title,
@@ -366,6 +369,7 @@ def _build_video_task_record(
         visual_note_mode,
         prompt_preset_id,
         summary_scope,
+        schedule,
     )
     input_type = InputType.URL
     if str(video.platform or "").lower() == "local":
@@ -377,6 +381,8 @@ def _build_video_task_record(
         task_input.options.prompt_preset_id = prompt_preset_id
     if summary_scope is not None:
         task_input.options.summary_scope = summary_scope
+    if schedule is not None:
+        task_input.options.schedule = schedule
     return TaskRecord(
         task_input=task_input,
         video_id=video.video_id,
@@ -766,6 +772,7 @@ def create_video_collection_tasks(
         "visual_note_mode": payload.visual_note_mode,
         "prompt_preset_id": payload.prompt_preset_id,
         "summary_scope": payload.summary_scope,
+        "schedule": payload.schedule,
     }
     request_fingerprint = hashlib.sha256(
         json.dumps(
@@ -782,6 +789,7 @@ def create_video_collection_tasks(
             visual_note_mode=payload.visual_note_mode,
             prompt_preset_id=payload.prompt_preset_id,
             summary_scope=payload.summary_scope,
+            schedule=payload.schedule,
         )
         for video in videos
     ]
@@ -1165,6 +1173,7 @@ def create_video_task(
         visual_note_mode=getattr(request_body, "visual_note_mode", None) if request_body else None,
         prompt_preset_id=getattr(request_body, "prompt_preset_id", None) if request_body else None,
         summary_scope=getattr(request_body, "summary_scope", None) if request_body else None,
+        schedule=getattr(request_body, "schedule", None) if request_body else None,
     )
     return refreshed.to_detail()
 
@@ -1294,6 +1303,7 @@ def create_video_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request
         skipped_pages.extend(conflict_pages)
 
     prompt_preset_id = getattr(body, "prompt_preset_id", None)
+    schedule = getattr(body, "schedule", None)
     for page_number in creatable_page_numbers:
         refreshed = _create_video_task_record(
             app_state=request.app.state,
@@ -1301,6 +1311,7 @@ def create_video_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request
             video=video,
             page_number=page_number,
             prompt_preset_id=prompt_preset_id,
+            schedule=schedule,
         )
         created_tasks.append(refreshed.to_detail())
 

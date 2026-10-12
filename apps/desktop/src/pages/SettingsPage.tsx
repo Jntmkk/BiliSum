@@ -2808,6 +2808,66 @@ export function SettingsPage({
                   <input className="settings-input-field" type="text" value={form.oss_public_base_url || ""} onChange={(e) => updateForm({ ...form, oss_public_base_url: e.target.value })} placeholder="留空默认 https://{Bucket}.{Endpoint}" />
                   <span className="settings-input-caption">Bucket 为公共读时留空即可；绑定了 CDN/自定义域名时填写，如 https://img.example.com。</span>
                 </label>
+
+                <div className="settings-input-group" ref={registerFocusTarget("offpeak_schedule_default") as (node: HTMLDivElement | null) => void}>
+                  <div className="settings-toggle-row">
+                    <div className="settings-toggle-label">
+                      <span className="settings-toggle-title">低峰期调度（自动摄入）</span>
+                      <span className="settings-toggle-caption">开启后，UP 动态监控自动摄入的总结任务标记为「低峰期执行」：转写立即完成，LLM 摘要避开下方配置的高峰时段（DeepSeek 高峰计价、闲时半价，最多等待到下一个闲时段开始）。手动粘贴、批量添加的默认不受此开关影响。</span>
+                    </div>
+                    <label className="toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={form.offpeak_schedule_default || false}
+                        onChange={(e) => updateForm({ ...form, offpeak_schedule_default: e.target.checked })}
+                      />
+                      <span className="toggle-slider" />
+                    </label>
+                  </div>
+                </div>
+                <label className="settings-input-group" ref={registerFocusTarget("offpeak_timezone") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">低峰期时区</span>
+                  <input className="settings-input-field" type="text" value={form.offpeak_timezone || "Asia/Shanghai"} onChange={(e) => updateForm({ ...form, offpeak_timezone: e.target.value })} placeholder="Asia/Shanghai" />
+                  <span className="settings-input-caption">判断高峰时段所用时区，默认为北京时间（Asia/Shanghai）。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("offpeak_peak_windows") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">高峰时段</span>
+                  <input className="settings-input-field" type="text" value={form.offpeak_peak_windows || "09:00-12:00,14:00-18:00"} onChange={(e) => updateForm({ ...form, offpeak_peak_windows: e.target.value })} placeholder="09:00-12:00,14:00-18:00" />
+                  <span className="settings-input-caption">逗号分隔的 HH:MM-HH:MM 时段，如 DeepSeek 默认高峰 09:00-12:00,14:00-18:00；支持跨零点时段（如 22:00-07:00）。</span>
+                </label>
+                <div className="settings-input-group" ref={registerFocusTarget("offpeak_peak_weekdays") as (node: HTMLDivElement | null) => void}>
+                  <span className="settings-input-label">高峰星期</span>
+                  <div className="settings-weekday-row">
+                    {[
+                      ["1", "周一"],
+                      ["2", "周二"],
+                      ["3", "周三"],
+                      ["4", "周四"],
+                      ["5", "周五"],
+                      ["6", "周六"],
+                      ["0", "周日"],
+                    ].map(([value, label]) => (
+                      <label key={value} className="settings-weekday-option">
+                        <input
+                          type="checkbox"
+                          checked={(form.offpeak_peak_weekdays ?? "0,1,2,3,4").split(",").map((item) => item.trim()).includes(value)}
+                          onChange={(event) => {
+                            const current = new Set((form.offpeak_peak_weekdays ?? "0,1,2,3,4").split(",").map((item) => item.trim()).filter(Boolean));
+                            if (event.target.checked) {
+                              current.add(value);
+                            } else {
+                              current.delete(value);
+                            }
+                            const ordered = ["0", "1", "2", "3", "4", "5", "6"].filter((item) => current.has(item));
+                            updateForm({ ...form, offpeak_peak_weekdays: ordered.join(",") });
+                          }}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <span className="settings-input-caption">勾选的星期视为高峰日（DeepSeek 默认周一至周五，周末全天闲时）；全部不勾选表示永不进入高峰。</span>
+                </div>
               </div>
             </section>
           )}

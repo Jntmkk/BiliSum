@@ -25,6 +25,7 @@ function formatRelativeTime(pubdate: number): string {
 const TASK_BADGE_LABELS: Record<string, string> = {
   queued: "排队中",
   running: "总结中",
+  waiting_offpeak: "等待低峰期",
   completed: "已完成",
   failed: "失败",
   cancelled: "已取消",

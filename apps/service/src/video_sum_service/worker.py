@@ -16,6 +16,7 @@ from video_sum_core.models.tasks import (
 )
 from video_sum_core.pipeline.base import PipelineContext, PipelineRunner, PipelineTranscription
 from video_sum_infra.config import ServiceSettings, normalize_visual_note_mode
+from video_sum_service.offpeak import is_peak_now
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import TaskRecord
 from video_sum_service.video_assets import resolve_video_page
@@ -91,6 +92,7 @@ class TaskWorker:
         auto_generate_visual_evidence: bool = False,
         knowledge_index_auto_rebuild: str = "disabled",
         knowledge_index_settings: ServiceSettings | None = None,
+        offpeak_settings: ServiceSettings | None = None,
         task_concurrency: int | None = None,
         transcription_concurrency: int | None = None,
         llm_concurrency: int | None = None,
@@ -102,6 +104,7 @@ class TaskWorker:
         self._auto_generate_visual_evidence = auto_generate_visual_evidence
         self._knowledge_index_auto_rebuild = str(knowledge_index_auto_rebuild or "disabled")
         self._knowledge_index_settings = knowledge_index_settings or ServiceSettings(_env_file=None)
+        self._offpeak_settings = offpeak_settings or self._knowledge_index_settings
         legacy_concurrency = max(1, int(task_concurrency or 1))
         self._transcription_state = _TaskQueueState(
             "transcription",
@@ -421,9 +424,12 @@ class TaskWorker:
     def _execute_job(self, state: _TaskQueueState, job: object, runner) -> None:
         job_id = state.job_id_for(job)
         handed_off = False
+        parked = False
         try:
             runner_result = runner(job)
-            handed_off = bool(runner_result) if state is self._task_state else False
+            if state is self._task_state:
+                handed_off = runner_result == "staged"
+                parked = runner_result == "parked"
         finally:
             task_status, task_message, task_tokens = (
                 self._summary_task_outcome(job_id)
@@ -451,6 +457,15 @@ class TaskWorker:
                             progress=87,
                             message="转写完成，等待 LLM 并发槽位",
                         )
+                elif state is self._task_state and was_running and parked:
+                    # 高峰暂停：batch 项以 waiting_offpeak 收尾（到闲时由
+                    # OffPeakScheduler 恢复，不计入 token 统计）。
+                    self._complete_summary_task_locked(
+                        job_id,
+                        TaskStatus.WAITING_OFFPEAK.value,
+                        "已转写完成，等待低峰期执行",
+                        0,
+                    )
                 elif (
                     (state is self._task_state or state is self._llm_state)
                     and was_running
@@ -510,6 +525,8 @@ class TaskWorker:
         status = record.status.value if record is not None else TaskStatus.FAILED.value
         if status == TaskStatus.COMPLETED.value:
             return status, "任务已完成", task_tokens
+        if status == TaskStatus.WAITING_OFFPEAK.value:
+            return status, "已转写完成，等待低峰期执行", task_tokens
         if status == TaskStatus.CANCELLED.value:
             return status, "任务已取消", task_tokens
         if status == TaskStatus.FAILED.value:
@@ -527,15 +544,21 @@ class TaskWorker:
         if batch is None:
             return
         final_status = task_status or TaskStatus.FAILED.value
-        final_progress = 100 if final_status == TaskStatus.COMPLETED.value else 0
+        if final_status == TaskStatus.COMPLETED.value:
+            final_progress = 100
+        elif final_status == TaskStatus.WAITING_OFFPEAK.value:
+            final_progress = 86
+        else:
+            final_progress = 0
         self._update_summary_item_locked(
             task_id,
             status=final_status,
             progress=final_progress,
             message=task_message or "任务执行失败",
         )
-        batch.completed_tasks += 1
-        batch.total_tokens += task_tokens
+        if task_id in batch.items:
+            batch.completed_tasks += 1
+            batch.total_tokens += task_tokens
         if (
             not self._task_state.pending
             and not self._task_state.running_ids
@@ -639,18 +662,25 @@ class TaskWorker:
         if self._knowledge_index_auto_rebuild == "on_task_completed":
             self._index_completed_task(record.video_id, task_id)
 
-    def _run_transcription_job(self, task: TaskRecord) -> bool:
-        """Run only the download/ASR stage and release its slot on success."""
+    def _run_transcription_job(self, task: TaskRecord) -> Literal["staged", "parked", "done"]:
+        """Run only the download/ASR stage and release its slot on success.
+
+        Returns ``"staged"`` when the transcription is handed off to the LLM
+        queue, ``"parked"`` when an offpeak-scheduled task finished
+        transcription during LLM peak hours and waits to be resumed, and
+        ``"done"`` for every other terminal path (unsupported staged
+        execution, missing task, failure, or non-offpeak handoff skipped).
+        """
 
         task_id = task.task_id
         if not self._supports_staged_execution():
             self._run_task(task_id)
-            return False
+            return "done"
 
         record = self._repository.get_task(task_id)
         if record is None:
             logger.warning("skip missing task task_id=%s", task_id)
-            return False
+            return "done"
 
         logger.info("start transcription stage task_id=%s", task_id)
         self._repository.update_status(task_id, TaskStatus.RUNNING)
@@ -678,13 +708,83 @@ class TaskWorker:
                 raise TypeError("staged transcription must return PipelineTranscription")
             with self._condition:
                 self._staged_transcriptions[task_id] = transcription
-            return True
+            schedule = str(getattr(record.task_input.options, "schedule", "immediate") or "immediate")
+            if schedule == "offpeak" and is_peak_now(self._offpeak_settings):
+                # 高峰暂停：转写结果已随 transcribing 事件持久化（result_json +
+                # 磁盘工件），恢复时由 resume_offpeak_task 从库中重建，这里不保留
+                # 内存副本（worker 重建会丢弃内存态）。
+                with self._condition:
+                    self._staged_transcriptions.pop(task_id, None)
+                logger.info("park task until off-peak task_id=%s", task_id)
+                self._repository.update_status(task_id, TaskStatus.WAITING_OFFPEAK)
+                self._update_summary_item(
+                    task_id,
+                    status=TaskStatus.WAITING_OFFPEAK.value,
+                    progress=86,
+                    message="转写完成，当前为 LLM 高峰期，已暂停至低峰期执行",
+                )
+                self._repository.append_event(
+                    task_id=task_id,
+                    stage="waiting_offpeak",
+                    progress=86,
+                    message="转写完成，当前为 LLM 高峰期，已暂停至低峰期执行；到闲时将自动继续，也可手动立即执行",
+                )
+                return "parked"
+            return "staged"
         except Exception as exc:
             logger.exception("transcription stage failed task_id=%s error=%s", task_id, exc)
             self._mark_task_failed(task_id, exc)
-            return False
+            return "done"
         finally:
             self._active_runner = None
+
+    def resume_offpeak_task(self, task_id: str) -> bool:
+        """把 waiting_offpeak 任务从持久化转写结果恢复进 LLM 队列。
+
+        由 OffPeakScheduler 在低峰期调用，也被 REST「立即执行」复用。
+        幂等：任务不在 waiting_offpeak、缺少转写结果或已在 LLM 队列时
+        返回 False。
+        """
+        record = self._repository.get_task(task_id)
+        if record is None or record.status != TaskStatus.WAITING_OFFPEAK:
+            return False
+        result = record.result
+        transcript = (result.transcript_text if result is not None else "") or ""
+        if not transcript.strip():
+            logger.warning("offpeak: parked task has no persisted transcript task_id=%s", task_id)
+            return False
+        transcription = PipelineTranscription(
+            title=record.page_title or record.task_input.title or task_id,
+            transcript=transcript,
+            segments=list(result.segments or []),
+            task_dir=self._offpeak_settings.tasks_dir / task_id,
+        )
+        with self._condition:
+            if self._shutdown_requested or not self._accept_new_work:
+                return False
+            if task_id in self._llm_state.pending_ids or task_id in self._llm_state.running_ids:
+                return False
+            self._staged_transcriptions[task_id] = transcription
+            if not self._enqueue_llm_locked(task_id):
+                self._staged_transcriptions.pop(task_id, None)
+                return False
+            self._update_summary_item_locked(
+                task_id,
+                status=TaskStatus.RUNNING.value,
+                progress=88,
+                message="已恢复执行，正在进入 LLM 摘要阶段",
+            )
+            # 恢复路径不经 _execute_job，必须自己唤醒 llm 派发循环
+            self._condition.notify_all()
+        self._repository.update_status(task_id, TaskStatus.RUNNING)
+        self._repository.append_event(
+            task_id=task_id,
+            stage="offpeak_resumed",
+            progress=88,
+            message="低峰期已到，已恢复执行摘要任务",
+        )
+        logger.info("resumed parked offpeak task_id=%s", task_id)
+        return True
 
     def _run_llm_job(self, job: _LLMJob) -> None:
         """Run summary/knowledge/visual LLM work for a transcribed task."""

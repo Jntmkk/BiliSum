@@ -63,6 +63,7 @@ export function taskStatusLabel(status?: TaskStatus | null) {
   const labels: Record<string, string> = {
     queued: "排队中",
     running: "处理中",
+    waiting_offpeak: "等待低峰期",
     completed: "已完成",
     failed: "失败",
     cancelled: "已取消",

@@ -2167,6 +2167,7 @@ def build_worker(
             else "disabled"
         ),
         knowledge_index_settings=current_settings,
+        offpeak_settings=current_settings,
         transcription_concurrency=current_settings.transcription_concurrency,
         llm_concurrency=current_settings.llm_concurrency,
         mindmap_concurrency=current_settings.mindmap_concurrency,
@@ -2308,6 +2309,10 @@ def serialize_settings(
         "oss_access_key_secret": "",
         "oss_access_key_secret_configured": bool(current_settings.oss_access_key_secret),
         "oss_public_base_url": current_settings.oss_public_base_url,
+        "offpeak_schedule_default": current_settings.offpeak_schedule_default,
+        "offpeak_timezone": current_settings.offpeak_timezone,
+        "offpeak_peak_windows": current_settings.offpeak_peak_windows,
+        "offpeak_peak_weekdays": current_settings.offpeak_peak_weekdays,
         "settings_file_exists": settings_manager.has_persisted_settings,
         "defaults": {
             "knowledge_note_system_prompt": DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,

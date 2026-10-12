@@ -21,12 +21,15 @@ class VideoTaskCreateRequest(BaseModel):
     visual_note_mode: str | None = None
     prompt_preset_id: str | None = None
     summary_scope: str | None = None
+    # "immediate" 照常执行；"offpeak" 避开 LLM 高峰计价（闲时仍立即执行）。
+    schedule: Literal["immediate", "offpeak"] | None = None
 
 
 class VideoTaskBatchRequest(BaseModel):
     page_numbers: list[int] = Field(default_factory=list)
     confirm: bool = False
     prompt_preset_id: str | None = None
+    schedule: Literal["immediate", "offpeak"] | None = None
 
 
 class AggregateSummaryRequest(BaseModel):
@@ -381,6 +384,8 @@ class VideoCollectionTaskCreateRequest(BaseModel):
     visual_note_mode: str | None = None
     prompt_preset_id: str | None = None
     summary_scope: str | None = None
+    # "immediate" 照常执行；"offpeak" 避开 LLM 高峰计价（闲时仍立即执行）。
+    schedule: Literal["immediate", "offpeak"] | None = None
 
 
 class VideoCollectionTaskDispatchFailure(BaseModel):

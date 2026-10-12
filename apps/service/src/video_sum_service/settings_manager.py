@@ -164,6 +164,10 @@ class SettingsUpdatePayload(BaseModel):
     oss_access_key_id: str | None = None
     oss_access_key_secret: str | None = None
     oss_public_base_url: str | None = None
+    offpeak_schedule_default: bool | None = None
+    offpeak_timezone: str | None = None
+    offpeak_peak_windows: str | None = None
+    offpeak_peak_weekdays: str | None = None
 
 
 class SettingsManager:

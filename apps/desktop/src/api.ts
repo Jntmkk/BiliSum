@@ -30,6 +30,7 @@ import type {
   TaskMindMapResponse,
   TaskVisualEvidenceResponse,
   TaskSummary,
+  TaskSchedule,
   UpDetectedVideo,
   UpDynamicsFeed,
   UpDynamicsStatus,
@@ -307,6 +308,7 @@ export const api = {
     visual_note_mode?: string | null;
     prompt_preset_id?: string | null;
     summary_scope?: string | null;
+    schedule?: TaskSchedule | null;
   }) {
     return fetchJson<VideoCollectionTaskCreateResponse>(`/api/v1/videos/collections/${encodeURIComponent(collectionId)}/tasks/batch`, {
       method: "POST",
@@ -456,6 +458,7 @@ export const api = {
       page_number?: number | null;
       visual_note_mode?: string | null;
       prompt_preset_id?: string | null;
+      schedule?: TaskSchedule | null;
     },
   ) {
     return fetchJson<TaskDetail>(`/api/v1/videos/${videoId}/tasks`, {
@@ -476,6 +479,11 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+    });
+  },
+  runTaskNow(taskId: string) {
+    return fetchJson<TaskDetail>(`/api/v1/tasks/${encodeURIComponent(taskId)}/run-now`, {
+      method: "POST",
     });
   },
   resummarizeVideoTasksBatch(videoId: string, payload: VideoTaskBatchRequest) {

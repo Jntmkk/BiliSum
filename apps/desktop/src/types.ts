@@ -1,4 +1,5 @@
-export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "running" | "waiting_offpeak" | "completed" | "failed" | "cancelled";
+export type TaskSchedule = "immediate" | "offpeak";
 export type PageAggregateStatus = "not_started" | "in_progress" | "completed" | "failed";
 
 export type TimelineItem = {
@@ -321,6 +322,7 @@ export type VideoTaskBatchRequest = {
   page_numbers: number[];
   confirm?: boolean;
   prompt_preset_id?: string | null;
+  schedule?: TaskSchedule | null;
 };
 
 export type VideoTaskBatchResponse = {
@@ -621,6 +623,10 @@ export type ServiceSettings = {
   oss_access_key_secret: string;
   oss_access_key_secret_configured: boolean;
   oss_public_base_url: string;
+  offpeak_schedule_default: boolean;
+  offpeak_timezone: string;
+  offpeak_peak_windows: string;
+  offpeak_peak_weekdays: string;
   settings_file_exists?: boolean;
   defaults?: {
     knowledge_note_system_prompt?: string;
