@@ -787,3 +787,75 @@ class KnowledgeStatsResponse(BaseModel):
 
 class KnowledgeRebuildResponse(BaseModel):
     indexed_videos: int
+
+
+class UpSubscriptionCreateRequest(BaseModel):
+    query: str
+
+
+class UpSubscriptionUpdateRequest(BaseModel):
+    enabled: bool | None = None
+
+
+class UpSubscriptionResponse(BaseModel):
+    subscription_id: str
+    mid: str
+    up_name: str
+    up_face_url: str
+    enabled: bool
+    last_checked_at: datetime | None = None
+    last_error: str | None = None
+    consecutive_failures: int = 0
+    unread_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class UpDetectedVideoResponse(BaseModel):
+    detection_id: str
+    subscription_id: str
+    bvid: str
+    aid: int | None = None
+    title: str
+    cover_url: str
+    duration: int = 0
+    pubdate: int = 0
+    description: str = ""
+    video_id: str | None = None
+    task_id: str | None = None
+    task_status: str | None = None
+    unread: bool = True
+    detection_status: str = "new"
+    created_at: datetime | None = None
+
+
+class UpDynamicsFeedResponse(BaseModel):
+    items: list[UpDetectedVideoResponse]
+    total: int
+    page: int
+    page_size: int
+    unread_count: int
+
+
+class UpDynamicsUnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+class UpDynamicsStatusResponse(BaseModel):
+    enabled: bool
+    poll_interval_seconds: int
+    cookie_ready: bool
+    watcher_running: bool
+    last_round_at: str | None = None
+    last_round_error: str | None = None
+    subscription_count: int
+
+
+class UpDynamicsMarkReadRequest(BaseModel):
+    detection_ids: list[str] | None = None
+    subscription_id: str | None = None
+    mark_all: bool = False
+
+
+class UpDynamicsRefreshResponse(BaseModel):
+    accepted: bool

@@ -2766,6 +2766,19 @@ export function SettingsPage({
                   </select>
                   <span className="settings-input-caption">排查转写问题时可以临时开启；日常关闭能减少磁盘占用。</span>
                 </label>
+                <label className="settings-input-group" ref={registerFocusTarget("up_dynamics_enabled") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">启用 UP 动态监控</span>
+                  <select className="settings-select-field" value={form.up_dynamics_enabled ? "true" : "false"} onChange={(e) => updateForm({ ...form, up_dynamics_enabled: e.target.value === "true" })}>
+                    <option value="false">关闭</option>
+                    <option value="true">开启</option>
+                  </select>
+                  <span className="settings-input-caption">开启后服务端会定期检查已订阅 UP 主的新投稿，自动入库视频并提交总结任务；订阅管理在视频库的「UP 动态」页签。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("up_dynamics_poll_interval_seconds") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">UP 动态轮询间隔（秒）</span>
+                  <input className="settings-input-field" type="number" min={60} max={3600} value={form.up_dynamics_poll_interval_seconds || 600} onChange={(e) => updateForm({ ...form, up_dynamics_poll_interval_seconds: Number(e.target.value) })} />
+                  <span className="settings-input-caption">服务端每隔该时长检查一轮订阅 UP 的新投稿，范围 60-3600 秒，默认 600 秒（10 分钟）。</span>
+                </label>
               </div>
             </section>
           )}

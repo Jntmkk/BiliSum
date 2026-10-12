@@ -232,6 +232,56 @@ export type PromptMatchResult = {
   confidence: number;
 };
 
+export type UpSubscription = {
+  subscription_id: string;
+  mid: string;
+  up_name: string;
+  up_face_url: string;
+  enabled: boolean;
+  last_checked_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  unread_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type UpDetectedVideo = {
+  detection_id: string;
+  subscription_id: string;
+  bvid: string;
+  aid: number | null;
+  title: string;
+  cover_url: string;
+  duration: number;
+  pubdate: number;
+  description: string;
+  video_id: string | null;
+  task_id: string | null;
+  task_status: string | null;
+  unread: boolean;
+  detection_status: string;
+  created_at: string | null;
+};
+
+export type UpDynamicsFeed = {
+  items: UpDetectedVideo[];
+  total: number;
+  page: number;
+  page_size: number;
+  unread_count: number;
+};
+
+export type UpDynamicsStatus = {
+  enabled: boolean;
+  poll_interval_seconds: number;
+  cookie_ready: boolean;
+  watcher_running: boolean;
+  last_round_at: string | null;
+  last_round_error: string | null;
+  subscription_count: number;
+};
+
 export type TaskSummary = {
   task_id: string;
   video_id?: string | null;
@@ -563,6 +613,8 @@ export type ServiceSettings = {
   summary_chunk_retry_count: number;
   ytdlp_cookies_file: string;
   ytdlp_cookies_browser: string;
+  up_dynamics_enabled: boolean;
+  up_dynamics_poll_interval_seconds: number;
   settings_file_exists?: boolean;
   defaults?: {
     knowledge_note_system_prompt?: string;

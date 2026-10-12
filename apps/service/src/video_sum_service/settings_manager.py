@@ -156,6 +156,8 @@ class SettingsUpdatePayload(BaseModel):
     summary_chunk_retry_count: int | None = None
     ytdlp_cookies_file: str | None = None
     ytdlp_cookies_browser: str | None = None
+    up_dynamics_enabled: bool | None = None
+    up_dynamics_poll_interval_seconds: int | None = None
 
 
 class SettingsManager:

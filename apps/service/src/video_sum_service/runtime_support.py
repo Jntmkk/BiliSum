@@ -2300,6 +2300,8 @@ def serialize_settings(
         "summary_chunk_retry_count": current_settings.summary_chunk_retry_count,
         "ytdlp_cookies_file": current_settings.ytdlp_cookies_file,
         "ytdlp_cookies_browser": current_settings.ytdlp_cookies_browser,
+        "up_dynamics_enabled": current_settings.up_dynamics_enabled,
+        "up_dynamics_poll_interval_seconds": current_settings.up_dynamics_poll_interval_seconds,
         "settings_file_exists": settings_manager.has_persisted_settings,
         "defaults": {
             "knowledge_note_system_prompt": DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
