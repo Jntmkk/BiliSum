@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 ARG APT_MIRROR=http://mirrors.tuna.tsinghua.edu.cn
 
+# KNOWLEDGE=1（默认，full 镜像）安装 [knowledge] extra（chromadb + sentence-transformers → torch）。
+# KNOWLEDGE=0 构建 mini 镜像：知识库功能缺失时报友好错误，镜像从 ~3.5GB 降到 ~0.6GB。
+ARG KNOWLEDGE=1
+
 RUN if [ -n "${APT_MIRROR}" ]; then \
         sed -i "s|http://deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
     fi \
@@ -30,7 +34,11 @@ COPY apps/service ./apps/service
 COPY apps/web/static ./apps/web/static
 
 RUN python -m pip install --upgrade pip setuptools wheel hatchling \
-    && python -m pip install ./packages/infra ./packages/core './apps/service[knowledge]'
+    && if [ "${KNOWLEDGE}" = "1" ]; then \
+         python -m pip install ./packages/infra ./packages/core './apps/service[knowledge]'; \
+       else \
+         python -m pip install ./packages/infra ./packages/core ./apps/service; \
+       fi
 
 RUN mkdir -p /data/cache /data/tasks /data/logs
 
