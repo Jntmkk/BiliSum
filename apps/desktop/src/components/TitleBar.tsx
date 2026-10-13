@@ -1,7 +1,24 @@
-import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ConfigHealth, UpdateState } from "../appModel";
+import type { FeedbackCategory } from "../api";
 import type { WorkerQueueItem, WorkerQueueSnapshot, WorkerSnapshot } from "../types";
+
+const FEEDBACK_CATEGORY_OPTIONS: Array<{ value: FeedbackCategory; label: string }> = [
+  { value: "bug", label: "问题反馈" },
+  { value: "feature", label: "功能建议" },
+  { value: "question", label: "使用疑问" },
+  { value: "other", label: "其他" },
+];
+
+function feedbackIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.75C2.5 3.06 3.06 2.5 3.75 2.5h8.5c.69 0 1.25.56 1.25 1.25v6.5c0 .69-.56 1.25-1.25 1.25H6l-2.6 2.21c-.4.34-1.02.05-1.02-.47V3.75Z" />
+      <path d="M5.25 5.5h5.5M5.25 8h3.5" />
+    </svg>
+  );
+}
 
 type QueueStatusView = {
   completed: number;
@@ -117,6 +134,7 @@ export function TitleBar({
   worker,
   onOpenSettings,
   onOpenUpdateDialog,
+  onSubmitFeedback,
 }: {
   darkMode: boolean;
   onToggleTheme(): void;
@@ -131,14 +149,22 @@ export function TitleBar({
   worker?: WorkerSnapshot | null;
   onOpenSettings(issueKey?: string): void;
   onOpenUpdateDialog(): void;
+  onSubmitFeedback(input: { category: FeedbackCategory; description: string }): Promise<{ issueUrl: string }>;
 }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const [queuePopoverOpen, setQueuePopoverOpen] = useState(false);
   const [queuePage, setQueuePage] = useState<0 | 1>(0);
   const [completionDisplay, setCompletionDisplay] = useState<{ completed: number; total: number } | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState<FeedbackCategory>("bug");
+  const [feedbackDescription, setFeedbackDescription] = useState("");
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackIssueUrl, setFeedbackIssueUrl] = useState("");
+  const [feedbackError, setFeedbackError] = useState("");
   const statusPopoverRef = useRef<HTMLDivElement | null>(null);
   const queuePopoverRef = useRef<HTMLDivElement | null>(null);
+  const feedbackPopoverRef = useRef<HTMLDivElement | null>(null);
   const completionTimerRef = useRef<number | null>(null);
   const queueWasActiveRef = useRef(false);
   const queueView = useMemo(() => queueSnapshot(worker), [worker]);
@@ -163,6 +189,9 @@ export function TitleBar({
       }
       if (!queuePopoverRef.current?.contains(target)) {
         setQueuePopoverOpen(false);
+      }
+      if (!feedbackPopoverRef.current?.contains(target)) {
+        setFeedbackOpen(false);
       }
     }
 
@@ -206,6 +235,7 @@ export function TitleBar({
     }
     setStatusPopoverOpen(false);
     setQueuePopoverOpen(false);
+    setFeedbackOpen(false);
   }
 
   const handleMaximize = async () => {
@@ -304,7 +334,40 @@ export function TitleBar({
 
   function toggleStatusPopover() {
     setQueuePopoverOpen(false);
+    setFeedbackOpen(false);
     setStatusPopoverOpen((current) => !current);
+  }
+
+  function toggleFeedbackPopover() {
+    setStatusPopoverOpen(false);
+    setQueuePopoverOpen(false);
+    setFeedbackOpen((current) => {
+      if (current) {
+        return false;
+      }
+      setFeedbackError("");
+      setFeedbackIssueUrl("");
+      return true;
+    });
+  }
+
+  async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const description = feedbackDescription.trim();
+    if (description.length < 5) {
+      setFeedbackError("请至少填写 5 个字符的问题描述。");
+      return;
+    }
+    setFeedbackSubmitting(true);
+    setFeedbackError("");
+    try {
+      const result = await onSubmitFeedback({ category: feedbackCategory, description });
+      setFeedbackIssueUrl(result.issueUrl);
+    } catch (error) {
+      setFeedbackError(error instanceof Error ? error.message : "提交失败，请稍后重试。");
+    } finally {
+      setFeedbackSubmitting(false);
+    }
   }
 
   return (
@@ -315,6 +378,9 @@ export function TitleBar({
           <img src="/static/assets/icons/icon.svg" alt="" />
         </div>
         <span className="title-bar-brand-text">BiliSum</span>
+        {version && version !== "-" ? (
+          <span className="title-bar-version" title={`部署版本 ${version}`}>v{version}</span>
+        ) : null}
       </div>
       <div className="title-bar-drag-region" />
       <div className="title-bar-controls">
@@ -502,6 +568,76 @@ export function TitleBar({
                 </button>
               </div>
             ) : null}
+          </div>
+        </div>
+        <div
+          className={`title-bar-feedback-wrap ${feedbackOpen ? "is-open" : ""}`}
+          ref={feedbackPopoverRef}
+        >
+          <button
+            className="title-bar-button"
+            type="button"
+            onClick={toggleFeedbackPopover}
+            aria-label="反馈问题"
+            aria-expanded={feedbackOpen}
+            aria-haspopup="dialog"
+            title="反馈问题"
+          >
+            {feedbackIcon()}
+          </button>
+          <div
+            className={`title-bar-feedback-popover ${feedbackOpen ? "is-visible" : ""}`}
+            role="dialog"
+            aria-label="反馈问题"
+          >
+            {feedbackIssueUrl ? (
+              <div className="title-bar-feedback-success">
+                <p>已提交，感谢反馈！</p>
+                <a href={feedbackIssueUrl} target="_blank" rel="noreferrer noopener">在 GitHub 上查看进展</a>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    setFeedbackIssueUrl("");
+                    setFeedbackDescription("");
+                    setFeedbackCategory("bug");
+                  }}
+                >
+                  继续反馈
+                </button>
+              </div>
+            ) : (
+              <form className="title-bar-feedback-form" onSubmit={handleFeedbackSubmit}>
+                <label className="title-bar-feedback-field">
+                  <span>反馈类型</span>
+                  <select
+                    className="select-field"
+                    value={feedbackCategory}
+                    onChange={(event) => setFeedbackCategory(event.target.value as FeedbackCategory)}
+                  >
+                    {FEEDBACK_CATEGORY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="title-bar-feedback-field">
+                  <span>问题描述</span>
+                  <textarea
+                    className="textarea-field"
+                    value={feedbackDescription}
+                    rows={4}
+                    maxLength={5000}
+                    placeholder="描述你遇到的问题…"
+                    onChange={(event) => setFeedbackDescription(event.target.value)}
+                  />
+                </label>
+                {feedbackError ? <p className="title-bar-feedback-error">{feedbackError}</p> : null}
+                <button className="primary-button" type="submit" disabled={feedbackSubmitting}>
+                  {feedbackSubmitting ? "提交中…" : "提交反馈"}
+                </button>
+                <p className="title-bar-feedback-note">提交后将自动附带当前页面、端类型与版本等环境信息。</p>
+              </form>
+            )}
           </div>
         </div>
         <button

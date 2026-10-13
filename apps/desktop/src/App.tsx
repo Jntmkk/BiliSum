@@ -14,7 +14,7 @@ import {
   type Snapshot,
   type UpdateState,
 } from "./appModel";
-import { AuthRequiredError, api } from "./api";
+import { AuthRequiredError, api, type FeedbackCategory } from "./api";
 import { getFloatingPlayerDockState, subscribeFloatingPlayerDock } from "./floatingPlayerDock";
 import { HomeIcon, KnowledgeIcon, LibraryIcon, PlayIcon, SettingsIcon } from "./components/AppIcons";
 import { CollectionSelectDialog } from "./components/CollectionSelectDialog";
@@ -389,6 +389,61 @@ export function App() {
 
   function openUpdateDialog() {
     setUpdateDialogOpen(true);
+  }
+
+  const feedbackRouteInfo = useMemo(() => {
+    const path = location.pathname;
+    if (path.startsWith("/videos/")) {
+      return { navItem: "视频库", routePattern: "/videos/:videoId", routeParam: path.split("/")[2] || "" };
+    }
+    if (path.startsWith("/collections/")) {
+      return { navItem: "视频库", routePattern: "/collections/:collectionId", routeParam: path.split("/")[2] || "" };
+    }
+    if (path.startsWith("/library")) {
+      return { navItem: "视频库", routePattern: "/library", routeParam: "" };
+    }
+    if (path.startsWith("/knowledge")) {
+      return { navItem: "知识库", routePattern: "/knowledge", routeParam: "" };
+    }
+    if (path.startsWith("/settings")) {
+      return { navItem: "设置", routePattern: "/settings", routeParam: "" };
+    }
+    return { navItem: "首页", routePattern: "/", routeParam: "" };
+  }, [location.pathname]);
+
+  const feedbackClientType = useMemo(() => {
+    const platform = window.desktop?.window?.platform;
+    if (platform) {
+      const platformLabels: Record<string, string> = {
+        darwin: "macOS",
+        win32: "Windows",
+        linux: "Linux",
+      };
+      return `App (${platformLabels[platform] ?? platform})`;
+    }
+    return snapshot.systemInfo?.deployment === "docker" ? "Docker" : "Web";
+  }, [snapshot.systemInfo?.deployment]);
+
+  async function handleSubmitFeedback(input: { category: FeedbackCategory; description: string }) {
+    return api.submitFeedback({
+      category: input.category,
+      description: input.description,
+      context: {
+        clientType: feedbackClientType,
+        version: runtimeVersionLabel,
+        route: location.pathname,
+        routePattern: feedbackRouteInfo.routePattern,
+        routeParam: feedbackRouteInfo.routeParam,
+        navItem: feedbackRouteInfo.navItem,
+        pageTitle: pageMeta.title,
+        theme: darkMode ? "dark" : "light",
+        serviceOnline: snapshot.serviceOnline,
+        runtimeStatus: runtimeStatusText,
+        serviceVersion: snapshot.systemInfo?.application?.version ?? "",
+        screen: `${window.innerWidth}x${window.innerHeight}`,
+        userAgent: navigator.userAgent,
+      },
+    });
   }
 
   function closeUpdateDialog() {
@@ -1348,6 +1403,7 @@ export function App() {
         worker={snapshot.systemInfo?.worker}
         onOpenSettings={openConfigAssist}
         onOpenUpdateDialog={openUpdateDialog}
+        onSubmitFeedback={handleSubmitFeedback}
       />
       <aside className="sidebar">
         <nav className="nav">
