@@ -16,6 +16,7 @@ from video_sum_core.models.tasks import (
 )
 from video_sum_core.pipeline.base import PipelineContext, PipelineRunner, PipelineTranscription
 from video_sum_infra.config import ServiceSettings, normalize_visual_note_mode
+from video_sum_service.bilibili_cookie_store import materialize_bilibili_cookie_file
 from video_sum_service.offpeak import is_peak_now
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import TaskRecord
@@ -426,6 +427,9 @@ class TaskWorker:
         handed_off = False
         parked = False
         try:
+            # 任务下载（core pipeline 读 ytdlp_cookies_file）前先确保文件是最新的，
+            # 否则另一台实例刚扫码写入共享库的登录态在本机文件里还是旧的。
+            materialize_bilibili_cookie_file()
             runner_result = runner(job)
             if state is self._task_state:
                 handed_off = runner_result == "staged"

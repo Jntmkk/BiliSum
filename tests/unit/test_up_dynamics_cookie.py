@@ -2,6 +2,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
+from video_sum_service import bilibili_cookie_store as cookie_store
 from video_sum_service import bilibili_wbi as wbi
 
 NETSCAPE_CONTENT = """# Netscape HTTP Cookie File
@@ -12,9 +15,16 @@ NETSCAPE_CONTENT = """# Netscape HTTP Cookie File
 """
 
 
+@pytest.fixture(autouse=True)
+def _reset_cookie_store():
+    cookie_store.reset_bilibili_cookie_store_for_tests()
+    yield
+    cookie_store.reset_bilibili_cookie_store_for_tests()
+
+
 def _patch_data_dir(tmp_path: Path):
     settings = SimpleNamespace(data_dir=str(tmp_path))
-    return patch.object(wbi, "settings_manager", SimpleNamespace(current=settings))
+    return patch.object(cookie_store, "settings_manager", SimpleNamespace(current=settings))
 
 
 def test_load_cookie_header_parses_netscape_file(tmp_path: Path):

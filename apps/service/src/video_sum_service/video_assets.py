@@ -16,6 +16,7 @@ from video_sum_core.models.tasks import InputType
 from video_sum_core.utils import extract_bilibili_page, normalize_video_url
 from video_sum_infra.runtime import ffmpeg_location
 
+from video_sum_service.bilibili_cookie_store import materialize_bilibili_cookie_file
 from video_sum_service.bilibili_wbi import load_bilibili_cookie_header
 from video_sum_service.context import COVER_CACHE_DIR, settings_manager
 from video_sum_service.integrations import cache_cover_image
@@ -123,7 +124,7 @@ def build_ydl_probe_options(*, extract_flat: bool = False) -> dict[str, object]:
         or ""
     ).strip()
     if cookie_file:
-        cookie_path = Path(cookie_file).expanduser()
+        cookie_path = materialize_bilibili_cookie_file(Path(cookie_file).expanduser())
         if cookie_path.exists() and cookie_path.is_file():
             options["cookiefile"] = str(cookie_path)
         else:
