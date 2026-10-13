@@ -96,6 +96,10 @@ def _rewrite_mysql_ddl(text: str) -> str:
 
     # TEXT cannot be a primary key or index column in MySQL.
     text = re.sub(r"\b(`?)(\w+)(`?) TEXT\b", column_type, text)
+    # SQLite INTEGER is 64-bit; MySQL INTEGER is only 32-bit. Bilibili av
+    # ids (aid) already exceed 2^31, and epoch timestamps approach it, so
+    # every INTEGER column becomes BIGINT to keep the SQLite range.
+    text = re.sub(r"\bINTEGER\b", "BIGINT", text)
     # TEXT-family columns only accept expression defaults with parentheses
     # (MySQL 8.0.13+).
     text = re.sub(

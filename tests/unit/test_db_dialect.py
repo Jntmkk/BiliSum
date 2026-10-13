@@ -158,6 +158,34 @@ def test_create_index_if_not_exists() -> None:
     )
 
 
+def test_partial_index_where_tail_dropped() -> None:
+    sql = "CREATE INDEX idx_up_detected_unread ON up_detected_videos(read_at) WHERE read_at IS NULL"
+    assert rewrite_sql(sql, "mysql") == (
+        "CREATE INDEX idx_up_detected_unread ON up_detected_videos(read_at)"
+    )
+
+
+def test_up_tables_ddl_type_mapping() -> None:
+    ddl = """
+    CREATE TABLE IF NOT EXISTS up_subscriptions (
+        subscription_id TEXT PRIMARY KEY,
+        mid TEXT NOT NULL,
+        up_name TEXT NOT NULL DEFAULT ''
+    )
+    """
+    rewritten = rewrite_sql(ddl, "mysql")
+    assert "subscription_id VARCHAR(191) PRIMARY KEY" in rewritten
+    assert "mid VARCHAR(191) NOT NULL" in rewritten
+    assert "up_name TEXT NOT NULL DEFAULT ('')" in rewritten
+
+
+def test_integer_maps_to_bigint() -> None:
+    """SQLite INTEGER is 64-bit; MySQL INTEGER is 32-bit (bilibili aid overflows it)."""
+    ddl = "CREATE TABLE IF NOT EXISTS t (aid INTEGER, seq INTEGER NOT NULL DEFAULT 0)"
+    rewritten = rewrite_sql(ddl, "mysql")
+    assert "(aid BIGINT, seq BIGINT NOT NULL DEFAULT 0)" in rewritten
+
+
 def test_ddl_type_mapping() -> None:
     ddl = """
     CREATE TABLE IF NOT EXISTS video_assets (
@@ -174,7 +202,7 @@ def test_ddl_type_mapping() -> None:
     assert "video_id VARCHAR(191) PRIMARY KEY" in rewritten
     assert "canonical_id VARCHAR(191) NOT NULL UNIQUE" in rewritten
     assert "page_catalog_json LONGTEXT NOT NULL DEFAULT ('[]')" in rewritten
-    assert "is_favorite INTEGER NOT NULL DEFAULT 0" in rewritten
+    assert "is_favorite BIGINT NOT NULL DEFAULT 0" in rewritten
     assert "title TEXT NOT NULL" in rewritten
 
 
