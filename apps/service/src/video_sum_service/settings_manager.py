@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -28,6 +28,7 @@ from video_sum_infra.config import (
     recommend_task_concurrency,
     recommend_transcription_concurrency,
 )
+from video_sum_service.settings_store import DbSettingsStore, FileSettingsStore, SettingsStore
 
 SECRET_SETTINGS_FIELDS = {
     "siliconflow_asr_api_key",
@@ -41,6 +42,24 @@ SECRET_SETTINGS_FIELDS = {
 }
 MASKED_SECRET_PLACEHOLDER = "******"
 SETTINGS_SCHEMA_VERSION = 2
+
+# Fields that describe the machine the service runs on. In database-backed
+# (MySQL) mode these always come from the local environment, never from the
+# shared store: a copied or seeded settings.json from another machine must
+# not redirect this instance's data dir or database.
+INSTANCE_LOCAL_FIELDS = {
+    "data_dir",
+    "cache_dir",
+    "tasks_dir",
+    "database_url",
+    "host",
+    "port",
+}
+
+# How often `current` checks the store version for changes written by other
+# instances. Only the database backend reports a real version; file-backed
+# instances never refresh.
+SETTINGS_REFRESH_TTL_SECONDS = 5.0
 
 
 def is_blank_or_masked_secret(value: object) -> bool:
@@ -171,26 +190,84 @@ class SettingsUpdatePayload(BaseModel):
 
 
 class SettingsManager:
-    def __init__(self, base_settings: ServiceSettings) -> None:
+    def __init__(
+        self,
+        base_settings: ServiceSettings,
+        store: SettingsStore | None = None,
+    ) -> None:
         self._base_settings = base_settings
         self._settings = base_settings
         self._settings_path = Path(base_settings.data_dir) / "settings.json"
+        self._store: SettingsStore = (
+            store if store is not None else FileSettingsStore(self._settings_path)
+        )
+        self._is_db_store = isinstance(self._store, DbSettingsStore)
+        self._version = 0
+        self._loaded_at = 0.0
         # Serialize saves: concurrent PUT /settings requests (e.g. a quick
         # double-click on the summary prompt mode toggle) must not race on
-        # the shared settings file.
+        # the shared settings store.
         self._save_lock = threading.Lock()
+        self._refresh_lock = threading.Lock()
 
     @property
     def current(self) -> ServiceSettings:
+        self._refresh_if_stale()
         return self._settings
 
     @property
     def has_persisted_settings(self) -> bool:
-        return self._settings_path.exists()
+        try:
+            return self._store.has_data()
+        except Exception:
+            return False
+
+    def close(self) -> None:
+        self._store.close()
+
+    def _refresh_if_stale(self) -> None:
+        """Pick up settings written by other instances (database mode only).
+
+        Cheap version probe throttled by a TTL; a full reload happens only
+        when the store version actually moved. Reloads update the in-memory
+        settings only — runtime side effects (worker rebuild) intentionally
+        stay with the instance that performed the save.
+        """
+        if not self._is_db_store:
+            return
+        now = time.monotonic()
+        if now - self._loaded_at < SETTINGS_REFRESH_TTL_SECONDS:
+            return
+        with self._refresh_lock:
+            if now - self._loaded_at < SETTINGS_REFRESH_TTL_SECONDS:
+                return
+            self._loaded_at = now
+            try:
+                remote_version = self._store.version()
+            except Exception:
+                return
+            if remote_version == self._version:
+                return
+            self.load()
 
     def load(self) -> ServiceSettings:
-        if self._settings_path.exists():
-            stored = json.loads(self._settings_path.read_text(encoding="utf-8"))
+        loaded = self._load_raw()
+        if loaded is None:
+            raw = None
+            seeded = False
+        else:
+            raw, seeded = loaded
+        if raw is None:
+            self._settings = self._base_settings.model_copy(
+                update={
+                    "task_concurrency": recommend_task_concurrency(self._base_settings),
+                    "transcription_concurrency": recommend_transcription_concurrency(self._base_settings),
+                    "llm_concurrency": recommend_llm_concurrency(self._base_settings),
+                    "mindmap_concurrency": recommend_mindmap_concurrency(),
+                }
+            )
+        else:
+            stored = raw
             if stored.get("summary_system_prompt") == LEGACY_SUMMARY_SYSTEM_PROMPT:
                 stored["summary_system_prompt"] = DEFAULT_SUMMARY_SYSTEM_PROMPT
             if stored.get("summary_system_prompt") == PREVIOUS_DEFAULT_SUMMARY_SYSTEM_PROMPT:
@@ -254,23 +331,45 @@ class SettingsManager:
             if "mindmap_concurrency" not in stored:
                 stored["mindmap_concurrency"] = recommend_mindmap_concurrency()
                 migrated = True
+            if self._is_db_store:
+                # Instance-local fields always come from the local environment
+                # in database mode; a seeded/copied file must not override them.
+                for field in INSTANCE_LOCAL_FIELDS:
+                    stored.pop(field, None)
             self._settings = ServiceSettings.model_validate({**self._base_settings.model_dump(), **stored})
-            if migrated:
-                self._settings_path.parent.mkdir(parents=True, exist_ok=True)
-                self._settings_path.write_text(
-                    json.dumps(self._settings.model_dump(mode="json"), ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-        else:
-            self._settings = self._base_settings.model_copy(
-                update={
-                    "task_concurrency": recommend_task_concurrency(self._base_settings),
-                    "transcription_concurrency": recommend_transcription_concurrency(self._base_settings),
-                    "llm_concurrency": recommend_llm_concurrency(self._base_settings),
-                    "mindmap_concurrency": recommend_mindmap_concurrency(),
-                }
-            )
+            if migrated or seeded:
+                self._store.save(self._settings.model_dump(mode="json"))
+        self._version = self._safe_version()
+        self._loaded_at = time.monotonic()
         return self._settings
+
+    def _load_raw(self) -> tuple[dict[str, object], bool] | None:
+        """Read the raw stored settings; returns ``(data, seeded_from_file)``.
+
+        A fresh database store is seeded from a local settings.json so the
+        configuration follows a SQLite → MySQL migration.
+        """
+        try:
+            raw = self._store.load()
+        except (OSError, json.JSONDecodeError):
+            raw = None
+        if raw is not None:
+            return raw, False
+        if not self._is_db_store or not self._settings_path.exists():
+            return None
+        try:
+            seed = json.loads(self._settings_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(seed, dict):
+            return None
+        return seed, True
+
+    def _safe_version(self) -> int:
+        try:
+            return self._store.version()
+        except Exception:
+            return 0
 
     def save(self, payload: SettingsUpdatePayload) -> ServiceSettings:
         with self._save_lock:
@@ -294,14 +393,7 @@ class SettingsManager:
             if "transcription_concurrency" in updates:
                 updates["task_concurrency"] = updates["transcription_concurrency"]
             next_settings = ServiceSettings.model_validate({**current_dump, **updates})
-            self._settings_path.parent.mkdir(parents=True, exist_ok=True)
-            # Write atomically (temp file + rename) so an interrupted or
-            # concurrent write can never leave a truncated settings.json.
-            tmp_path = self._settings_path.with_name(self._settings_path.name + ".tmp")
-            tmp_path.write_text(
-                json.dumps(next_settings.model_dump(mode="json"), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            os.replace(tmp_path, self._settings_path)
+            self._store.save(next_settings.model_dump(mode="json"))
             self._settings = next_settings
+            self._version = self._safe_version()
             return self._settings

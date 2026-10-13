@@ -50,6 +50,23 @@ VIDEO_SUM_YTDLP_COOKIES_FILE=
 
 > `data_dir` / `cache_dir` / `tasks_dir` / `database_url` 由 `VIDEO_SUM_APP_DATA_ROOT` 推导，也可单独覆盖。
 
+### 数据库（`database_url`）
+
+底层存储同时支持 SQLite（默认，本地单机零依赖）和 MySQL 8.0+（多实例/远程共享场景）。
+两种数据库**同时受支持**，切换是重新配置，不提供 SQLite → MySQL 的数据迁移。
+
+| 取值示例 | 说明 |
+|----------|------|
+| `sqlite:///{数据根}/data/video_sum.db`（默认） | 内置 SQLite，无需任何配置 |
+| `mysql://user:password@127.0.0.1:3306/video_sum` | MySQL 8.0+ / MariaDB，依赖 PyMySQL（已随 `video-sum-infra` 安装） |
+
+使用 MySQL 时：
+
+- 数据库与数据表都在服务启动时自动初始化（`CREATE DATABASE IF NOT EXISTS ... CHARACTER SET utf8mb4` + 自动建表）。
+- **配置随库共享**：通过环境变量指定 MySQL 时，应用配置存入库的 `settings` 表（单行 JSON），多实例自动共享；首次启动会把本地 `settings.json` 自动导入。实例本地字段（数据目录、`database_url`、监听地址）始终取自本机环境，不入共享配置。
+- 密码含特殊字符时按 URL 规则转义（如 `@` → `%40`）。
+- 当前实现为单连接串行模型（与 SQLite 行为一致）；高并发部署的并发连接池是后续优化项。
+
 ### 转写（ASR）
 
 | 变量 | 默认 | 说明 |

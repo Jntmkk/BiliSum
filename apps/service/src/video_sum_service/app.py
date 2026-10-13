@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from video_sum_service.auth import is_auth_exempt_path, request_is_authorized, unauthorized_response
 from video_sum_core.models.tasks import TaskStatus
-from video_sum_infra.db import connect_sqlite
+from video_sum_infra.db import open_database
 from video_sum_infra.config import normalize_visual_note_mode
 from video_sum_infra.runtime import (
     activate_runtime_pythonpath,
@@ -111,11 +111,11 @@ def recover_incomplete_tasks(repository: SqliteTaskRepository, task_worker) -> i
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     current_settings = settings_manager.current
-    connection = connect_sqlite(current_settings.database_url)
-    repository = SqliteTaskRepository(connection)
+    session = open_database(current_settings.database_url)
+    repository = SqliteTaskRepository(session)
     repository.initialize()
     app.state.task_repository = repository
-    app.state.db_connection = connection
+    app.state.db_session = session
     app.state.settings_manager = settings_manager
     knowledge_job_coordinator = KnowledgeJobCoordinator(repository, current_settings)
     knowledge_job_coordinator.start()
@@ -144,7 +144,8 @@ async def lifespan(app: FastAPI):
         if task_worker is not None and hasattr(task_worker, "shutdown"):
             task_worker.shutdown(wait=True, timeout=10)
         logger.info("application shutdown")
-        connection.close()
+        session.close()
+        settings_manager.close()
 
 
 app = FastAPI(
