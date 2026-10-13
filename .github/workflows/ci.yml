@@ -134,7 +134,7 @@ jobs:
       - name: Run MySQL integration tests
         env:
           VIDEO_SUM_TEST_MYSQL_URL: mysql://root:video-sum-test@127.0.0.1:3306
-        run: python -m pytest tests/unit/test_task_repository_mysql.py tests/unit/test_settings_mysql.py -q
+        run: python -m pytest tests/unit/test_task_repository_mysql.py tests/unit/test_settings_mysql.py tests/unit/test_bilibili_cookie_store_mysql.py -q
 
       - name: Run npx CLI tests
         run: node --test "packages/npx/test/*.test.js"

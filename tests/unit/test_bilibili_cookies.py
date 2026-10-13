@@ -172,3 +172,27 @@ def test_poll_bilibili_login_qrcode_writes_confirmed_cookies(monkeypatch, tmp_pa
     assert result["status"] == "confirmed"
     assert result["cookieCount"] == 1
     assert "SESSDATA\tsession-value" in cookies_file.read_text(encoding="utf-8")
+
+
+def test_write_bilibili_cookies_goes_through_cookie_store(monkeypatch, tmp_path: Path) -> None:
+    """登录态走共享存储写入，而不是直接写本机文件（MySQL 模式下才能两台共用）。"""
+    settings_manager._settings = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+    )
+    written: list[str] = []
+
+    class FakeStore:
+        def write(self, text: str) -> None:
+            written.append(text)
+
+    monkeypatch.setattr(bilibili_cookies, "get_bilibili_cookie_store", lambda: FakeStore())
+
+    cookies_file = bilibili_cookies._write_bilibili_cookies([make_cookie("SESSDATA", "session-value")])
+
+    assert len(written) == 1
+    assert "SESSDATA\tsession-value" in written[0]
+    assert Path(cookies_file) == tmp_path / "data" / "cookies" / "bilibili.txt"
+    assert not Path(cookies_file).exists()

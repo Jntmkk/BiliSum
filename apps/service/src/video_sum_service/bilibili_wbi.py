@@ -19,8 +19,11 @@ from pathlib import Path
 
 import httpx
 
+from video_sum_service.bilibili_cookie_store import (
+    canonical_cookie_file,
+    materialize_bilibili_cookie_file,
+)
 from video_sum_service.bilibili_cookies import BILIBILI_BROWSER_HEADERS
-from video_sum_service.context import settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +95,12 @@ class UpVideoItem:
 
 
 def bilibili_cookie_file() -> Path:
-    return Path(settings_manager.current.data_dir) / "cookies" / "bilibili.txt"
+    return canonical_cookie_file()
 
 
 def load_bilibili_cookie_header() -> str | None:
     """从 Netscape cookie 文件拼出 Cookie 头；必须含 SESSDATA 才算有效。"""
-    cookie_path = bilibili_cookie_file()
+    cookie_path = materialize_bilibili_cookie_file(bilibili_cookie_file())
     if not cookie_path.exists():
         return None
     try:
