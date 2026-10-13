@@ -121,7 +121,7 @@ export type VideoLibraryState = {
   videos: VideoAssetSummary[];
   folders: VideoFolder[];
   preferences: VideoLibraryPreferences;
-  collections: VideoCollection[];
+  collections: VideoCollectionSummary[];
 };
 
 export type VideoPageOption = {
@@ -193,6 +193,13 @@ export type CollectionSortMode = "source" | "source_desc" | "recent_summary" | "
 
 export type CollectionGroupMode = "none" | "status" | "source_section";
 
+export type VideoCollectionSummary = Omit<VideoCollection, "items" | "new_items">;
+
+export function toCollectionSummary(collection: VideoCollection): VideoCollectionSummary {
+  const { items: _items, new_items: _newItems, ...summary } = collection;
+  return summary;
+}
+
 export type VideoAssetDetail = VideoAssetSummary & {
   latest_result?: TaskResult | null;
   latest_error_message?: string | null;
@@ -203,7 +210,7 @@ export type VideoProbeResult = {
   cached: boolean;
   requires_selection: boolean;
   pages: VideoPageOption[];
-  collection?: VideoCollection | null;
+  collection?: VideoCollectionSummary | null;
 };
 
 export type PromptPreset = {

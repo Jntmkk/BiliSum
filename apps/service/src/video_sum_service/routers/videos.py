@@ -562,17 +562,17 @@ def probe_video(request: VideoProbeRequest, app_request: Request) -> VideoProbeR
         collection_payload = fetch_bilibili_collection_payload(request.url)
         if collection_payload:
             collection_id = str(collection_payload.get("collection_id") or "")
-            existing_collection = task_store.get_video_collection(collection_id) if collection_id else None
-            existing_bvids = {item.bvid for item in existing_collection.items} if existing_collection else set()
+            existing_collection = task_store.get_video_collection_summary(collection_id) if collection_id else None
+            existing_bvids = set(task_store.list_video_collection_bvids(collection_id)) if existing_collection else set()
             _ensure_collection_assets(
                 task_store,
                 collection_payload,
                 hide_existing=existing_collection is None,
                 existing_bvids=existing_bvids,
             )
-            collection = task_store.upsert_video_collection(collection_payload, request.url)
+            task_store.upsert_video_collection(collection_payload, request.url)
             task_store.initialize_video_collection_visibility(collection_id)
-            collection = task_store.get_video_collection(collection_id) or collection
+            collection = task_store.get_video_collection_summary(collection_id)
     return VideoProbeResponse(
         video=asset.to_summary(),
         cached=cached,
@@ -637,14 +637,14 @@ def list_videos(request: Request) -> list[VideoAssetSummaryResponse]:
 @router.get("/library", response_model=VideoLibraryResponse)
 def get_video_library(request: Request) -> VideoLibraryResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    collections = task_store.list_video_collections()
+    collections = task_store.list_video_collection_summaries()
     for collection in collections:
         task_store.initialize_video_collection_visibility(collection.collection_id)
     return VideoLibraryResponse(
         videos=[localize_video_cover(task_store, video).to_summary() for video in task_store.list_video_assets()],
         folders=task_store.list_video_folders(),
         preferences=task_store.get_library_preferences(),
-        collections=task_store.list_video_collections(),
+        collections=collections,
     )
 
 
@@ -1055,14 +1055,14 @@ def reorder_video_library(payload: VideoLibraryReorderRequest, request: Request)
         task_store.reorder_library_items([(item.kind, item.id) for item in payload.items], folder_id=payload.folder_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    collections = task_store.list_video_collections()
+    collections = task_store.list_video_collection_summaries()
     for collection in collections:
         task_store.initialize_video_collection_visibility(collection.collection_id)
     return VideoLibraryResponse(
         videos=[localize_video_cover(task_store, video).to_summary() for video in task_store.list_video_assets()],
         folders=task_store.list_video_folders(),
         preferences=task_store.get_library_preferences(),
-        collections=task_store.list_video_collections(),
+        collections=collections,
     )
 
 

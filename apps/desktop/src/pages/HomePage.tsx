@@ -7,7 +7,7 @@ import { LinkIcon, LocalVideoIcon } from "../components/AppIcons";
 import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import { VideoCard } from "../components/VideoCard";
 import { CollectionCard } from "../components/CollectionCard";
-import type { PromptPreset, VideoAssetSummary, VideoCollection } from "../types";
+import type { PromptPreset, VideoAssetSummary, VideoCollectionSummary } from "../types";
 import { formatDuration } from "../utils";
 
 type HomePageProps = {
@@ -34,7 +34,7 @@ type HomePageProps = {
 
 type HomeSectionItem =
   | { kind: "video"; video: VideoAssetSummary }
-  | { kind: "collection"; collection: VideoCollection };
+  | { kind: "collection"; collection: VideoCollectionSummary };
 
 type SummaryPreference = {
   noteMode: "text" | "visual";
