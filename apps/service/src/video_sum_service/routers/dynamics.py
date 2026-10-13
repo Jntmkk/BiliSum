@@ -355,6 +355,15 @@ def proxy_dynamics_image(url: str, request: Request) -> FileResponse:
         pass
     oss = _oss_config(settings_manager.current)
     oss_object_key = str(meta.get("oss_object_key") or "").strip()
+    if oss is not None and not oss_object_key and image_path.exists():
+        backfill_key = f"{_OSS_KEY_PREFIX}/{key}"
+        if _oss_upload(oss, backfill_key, image_path.read_bytes(), content_type):
+            meta["oss_object_key"] = backfill_key
+            try:
+                meta_path.write_text(json.dumps(meta), encoding="utf-8")
+            except OSError:
+                pass
+            oss_object_key = backfill_key
     if oss is not None and oss_object_key:
         signed_url = _oss_signed_url(oss, oss_object_key)
         if signed_url:
