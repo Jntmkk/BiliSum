@@ -256,23 +256,46 @@ def _oss_config(current: object) -> tuple[str, str, str, str, str] | None:
     return bucket, endpoint, ak, sk, public_base.rstrip("/")
 
 
-def _oss_upload(config: tuple[str, str, str, str, str], object_key: str, content: bytes, content_type: str) -> bool:
+def _oss_bucket_client(config: tuple[str, str, str, str, str]):
     try:
         import oss2  # type: ignore[import-not-found]
     except ImportError:
-        return False
+        return None
+    bucket_name, endpoint, ak, sk, _public_base = config
+    client_key = (bucket_name, endpoint, ak, sk)
+    bucket = _OSS_CLIENT_CACHE.get(client_key)
+    if bucket is None:
+        bucket = oss2.Bucket(oss2.Auth(ak, sk), f"https://{endpoint}", bucket_name)
+        _OSS_CLIENT_CACHE[client_key] = bucket
+    return bucket
+
+
+def _oss_upload(config: tuple[str, str, str, str, str], object_key: str, content: bytes, content_type: str) -> bool:
     bucket_name, endpoint, ak, sk, _public_base = config
     client_key = (bucket_name, endpoint, ak, sk)
     try:
-        bucket = _OSS_CLIENT_CACHE.get(client_key)
+        bucket = _oss_bucket_client(config)
         if bucket is None:
-            bucket = oss2.Bucket(oss2.Auth(ak, sk), f"https://{endpoint}", bucket_name)
-            _OSS_CLIENT_CACHE[client_key] = bucket
+            return False
         bucket.put_object(object_key, content, headers={"Content-Type": content_type})
         return True
     except Exception:  # noqa: BLE001 - 上游 OSS 故障时回退本地缓存
         _OSS_CLIENT_CACHE.pop(client_key, None)
         return False
+
+
+def _oss_signed_url(config: tuple[str, str, str, str, str], object_key: str, expires: int = 3600) -> str | None:
+    """私有 Bucket 场景下生成临时签名 URL；签名失败返回 None。"""
+    bucket_name, endpoint, ak, sk, _public_base = config
+    client_key = (bucket_name, endpoint, ak, sk)
+    try:
+        bucket = _oss_bucket_client(config)
+        if bucket is None:
+            return None
+        return bucket.sign_url("GET", object_key, expires)
+    except Exception:  # noqa: BLE001 - 签名失败时回退本地缓存
+        _OSS_CLIENT_CACHE.pop(client_key, None)
+        return None
 
 
 @router.get("/image-proxy")
@@ -320,7 +343,7 @@ def proxy_dynamics_image(url: str, request: Request) -> FileResponse:
         if oss is not None:
             object_key = f"{_OSS_KEY_PREFIX}/{key}"
             if _oss_upload(oss, object_key, response.content, content_type):
-                meta["oss_url"] = f"{oss[4]}/{object_key}"
+                meta["oss_object_key"] = object_key
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     meta: dict[str, object] = {}
@@ -330,6 +353,12 @@ def proxy_dynamics_image(url: str, request: Request) -> FileResponse:
         content_type = str(meta.get("content_type") or content_type)
     except (OSError, ValueError, TypeError, AttributeError):
         pass
+    oss = _oss_config(settings_manager.current)
+    oss_object_key = str(meta.get("oss_object_key") or "").strip()
+    if oss is not None and oss_object_key:
+        signed_url = _oss_signed_url(oss, oss_object_key)
+        if signed_url:
+            return RedirectResponse(signed_url, status_code=status.HTTP_302_FOUND)
     oss_url = str(meta.get("oss_url") or "").strip()
     if oss_url:
         return RedirectResponse(oss_url, status_code=status.HTTP_302_FOUND)
