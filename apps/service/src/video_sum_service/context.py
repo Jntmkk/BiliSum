@@ -6,10 +6,12 @@ from video_sum_infra.runtime import log_dir, web_static_dir
 
 from video_sum_service.auth import AccessTokenManager
 from video_sum_service.settings_manager import SettingsManager
+from video_sum_service.settings_store import create_settings_store
 
 logger = logging.getLogger("video_sum_service.app")
 
-settings_manager = SettingsManager(ServiceSettings(_env_file=None))
+_base_settings = ServiceSettings(_env_file=None)
+settings_manager = SettingsManager(_base_settings, store=create_settings_store(_base_settings))
 settings = settings_manager.load()
 access_token_manager = AccessTokenManager(settings.data_dir)
 app_info = AppInfo.load()

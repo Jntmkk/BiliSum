@@ -17,7 +17,7 @@ def test_repository_creates_knowledge_tables() -> None:
 
     table_names = {
         row["name"]
-        for row in repository._connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()  # noqa: SLF001
+        for row in repository._session._connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()  # noqa: SLF001
     }
 
     assert "video_tags" in table_names

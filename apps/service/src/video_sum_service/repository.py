@@ -2,25 +2,25 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from threading import Lock
+from typing import Any
 from uuid import uuid4
 
 from video_sum_core.models.tasks import TaskInput, TaskResult, TaskStatus
 from video_sum_core.utils import normalize_video_url
-from video_sum_infra.db import sqlite_cursor
+from video_sum_infra.db import DatabaseSession, SQLiteSession
 from video_sum_service.schemas import (
     KnowledgeIndexChunkRecord,
     TaskEventRecord,
     TaskRecord,
-    VideoTagRecord,
     VideoAssetRecord,
     VideoCollectionItemResponse,
     VideoCollectionResponse,
     VideoFolderResponse,
     VideoLibraryPreferencesResponse,
     VideoPageOptionResponse,
+    VideoTagRecord,
 )
 
 _UNSET = object()
@@ -38,13 +38,15 @@ def _collection_current_bvid(source_url: str) -> str:
         return match.group(1).lower() if match else ""
 
 
-class SqliteTaskRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._connection = connection
+class TaskRepository:
+    def __init__(self, session: DatabaseSession | sqlite3.Connection) -> None:
+        if isinstance(session, sqlite3.Connection):
+            session = SQLiteSession(session)
+        self._session: DatabaseSession = session
         self._lock = Lock()
 
     def initialize(self) -> None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS video_assets (
@@ -518,11 +520,11 @@ class SqliteTaskRepository:
                 """
             )
 
-    def _ensure_column(self, cursor: sqlite3.Cursor, table: str, column: str, definition: str) -> None:
-        rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-        names = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
-        if column not in names:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    def _ensure_column(self, cursor: Any, table: str, column: str, definition: str) -> None:
+        if column in self._session.table_columns(table):
+            return
+        adjusted = self._session.adjust_column_definition(table, column, definition)
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {adjusted}")
 
     def _canonical_family_pattern(self, canonical_id: str) -> tuple[str, str]:
         base = str(canonical_id or "").split("?", 1)[0]
@@ -542,7 +544,7 @@ class SqliteTaskRepository:
                     {prefix}.created_at, {prefix}.updated_at, r.result_json AS latest_result_json
         """
 
-    def _next_video_order(self, cursor: sqlite3.Cursor, field: str, folder_id: str | None = None) -> float:
+    def _next_video_order(self, cursor: Any, field: str, folder_id: str | None = None) -> float:
         preference = self._get_library_preference(cursor, "new_video_position", "front")
         if field == "folder_order":
             if folder_id is None:
@@ -558,7 +560,7 @@ class SqliteTaskRepository:
         max_order = float(row["max_order"]) if row and row["max_order"] is not None else 0
         return max_order + 1000 if preference == "back" else min_order - 1000
 
-    def _next_library_order(self, cursor: sqlite3.Cursor) -> float:
+    def _next_library_order(self, cursor: Any) -> float:
         preference = self._get_library_preference(cursor, "new_video_position", "front")
         row = cursor.execute(
             """
@@ -567,18 +569,18 @@ class SqliteTaskRepository:
                 SELECT global_order AS order_value FROM video_assets WHERE is_global_visible = 1
                 UNION ALL
                 SELECT global_order AS order_value FROM video_collections
-            )
+            ) AS order_scope
             """
         ).fetchone()
         min_order = float(row["min_order"]) if row and row["min_order"] is not None else 0
         max_order = float(row["max_order"]) if row and row["max_order"] is not None else 0
         return max_order + 1000 if preference == "back" else min_order - 1000
 
-    def _get_library_preference(self, cursor: sqlite3.Cursor, key: str, default: str) -> str:
+    def _get_library_preference(self, cursor: Any, key: str, default: str) -> str:
         row = cursor.execute("SELECT value FROM library_preferences WHERE key = ?", (key,)).fetchone()
         return str(row["value"]) if row is not None else default
 
-    def _consolidate_video_family(self, cursor: sqlite3.Cursor, canonical_id: str) -> tuple[str, str] | None:
+    def _consolidate_video_family(self, cursor: Any, canonical_id: str) -> tuple[str, str] | None:
         family, pattern = self._canonical_family_pattern(canonical_id)
         rows = cursor.execute(
             """
@@ -621,9 +623,9 @@ class SqliteTaskRepository:
         return primary_video_id, created_at
 
     def upsert_video_asset(self, asset: VideoAssetRecord) -> VideoAssetRecord:
-        updated_at = datetime.now(timezone.utc).isoformat()
+        updated_at = datetime.now(UTC).isoformat()
         created_at = asset.created_at.isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             consolidated = self._consolidate_video_family(cursor, asset.canonical_id)
             existing = cursor.execute(
                 "SELECT video_id, created_at FROM video_assets WHERE canonical_id = ?",
@@ -719,7 +721,7 @@ class SqliteTaskRepository:
         return refreshed
 
     def get_video_asset(self, video_id: str) -> VideoAssetRecord | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 """
                 SELECT
@@ -733,7 +735,7 @@ class SqliteTaskRepository:
         return self._row_to_video_asset(row) if row is not None else None
 
     def get_video_asset_by_canonical_id(self, canonical_id: str) -> VideoAssetRecord | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 """
                 SELECT
@@ -747,7 +749,7 @@ class SqliteTaskRepository:
         return self._row_to_video_asset(row) if row is not None else None
 
     def list_video_assets(self) -> list[VideoAssetRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT
@@ -758,7 +760,11 @@ class SqliteTaskRepository:
                 ORDER BY v.global_pinned DESC, v.global_order ASC, v.updated_at DESC
                 """.format(columns=self._select_video_columns("v"))
             ).fetchall()
-        videos = [self._row_to_video_asset(row) for row in rows]
+            folder_map = self._folder_ids_map([str(row["video_id"]) for row in rows])
+        videos = [
+            self._row_to_video_asset(row, folder_ids=folder_map.get(str(row["video_id"]), []))
+            for row in rows
+        ]
         grouped: dict[str, VideoAssetRecord] = {}
         for video in videos:
             family, _ = self._canonical_family_pattern(video.canonical_id)
@@ -790,7 +796,7 @@ class SqliteTaskRepository:
 
     def create_task_record(self, record: TaskRecord) -> TaskRecord:
         payload = self._serialize_record(record)
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             self._insert_task_record(cursor, record, payload)
         return record
 
@@ -808,11 +814,11 @@ class SqliteTaskRepository:
         batch id with a different request is rejected before any task is added.
         """
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         task_ids: list[str]
         created = False
         dispatch_completed = False
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             existing = cursor.execute(
                 """
                 SELECT request_fingerprint, task_ids_json, dispatch_completed
@@ -874,8 +880,8 @@ class SqliteTaskRepository:
         collection_id: str,
         batch_id: str,
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE video_collection_task_batches
@@ -886,7 +892,7 @@ class SqliteTaskRepository:
             )
 
     def list_tasks(self) -> list[TaskRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT
@@ -901,7 +907,7 @@ class SqliteTaskRepository:
         return [self._row_to_record(row) for row in rows]
 
     def list_knowledge_jobs(self, statuses: list[str] | None = None, limit: int = 100) -> list[dict[str, object]]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             normalized_statuses = [status for status in (statuses or []) if status in {"queued", "running", "aggregating"}]
             bounded_limit = max(1, min(int(limit), 500))
             if normalized_statuses:
@@ -923,10 +929,10 @@ class SqliteTaskRepository:
         return jobs
 
     def create_knowledge_conversation(self, title: str | None = None) -> dict[str, object]:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         conversation_id = uuid4().hex
         clean_title = str(title or "新会话").strip()[:120] or "新会话"
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO knowledge_conversations (conversation_id, title, created_at, updated_at, last_message_at)
@@ -937,7 +943,7 @@ class SqliteTaskRepository:
         return self.get_knowledge_conversation(conversation_id) or {}
 
     def list_knowledge_conversations(self, limit: int = 50) -> list[dict[str, object]]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT c.conversation_id, c.title, c.created_at, c.updated_at, c.last_message_at,
@@ -958,7 +964,7 @@ class SqliteTaskRepository:
         return [self._row_to_knowledge_conversation(row) for row in rows]
 
     def get_knowledge_conversation(self, conversation_id: str) -> dict[str, object] | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 """
                 SELECT c.conversation_id, c.title, c.created_at, c.updated_at, c.last_message_at,
@@ -981,8 +987,8 @@ class SqliteTaskRepository:
         clean_title = str(title or "").strip()[:120]
         if not clean_title:
             return None
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 "UPDATE knowledge_conversations SET title = ?, updated_at = ? WHERE conversation_id = ?",
                 (clean_title, updated_at, conversation_id),
@@ -992,7 +998,7 @@ class SqliteTaskRepository:
         return self.get_knowledge_conversation(conversation_id)
 
     def delete_knowledge_conversation(self, conversation_id: str) -> bool:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             exists = cursor.execute(
                 "SELECT conversation_id FROM knowledge_conversations WHERE conversation_id = ?",
                 (conversation_id,),
@@ -1023,9 +1029,9 @@ class SqliteTaskRepository:
         references: list[dict[str, object]] | None = None,
         job_id: str | None = None,
     ) -> dict[str, object] | None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         message_id = uuid4().hex
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             conversation = cursor.execute(
                 "SELECT conversation_id FROM knowledge_conversations WHERE conversation_id = ?",
                 (conversation_id,),
@@ -1067,7 +1073,7 @@ class SqliteTaskRepository:
         return self.get_knowledge_message(message_id)
 
     def get_knowledge_message(self, message_id: str) -> dict[str, object] | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT * FROM knowledge_messages WHERE message_id = ?",
                 (message_id,),
@@ -1075,7 +1081,7 @@ class SqliteTaskRepository:
         return self._row_to_knowledge_message(row) if row is not None else None
 
     def list_knowledge_messages(self, conversation_id: str) -> list[dict[str, object]]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 "SELECT * FROM knowledge_messages WHERE conversation_id = ? ORDER BY sequence ASC",
                 (conversation_id,),
@@ -1096,7 +1102,7 @@ class SqliteTaskRepository:
         has_update = any(value is not None for value in (content, status, reasoning, sources, tools)) or job_id is not _UNSET
         if not has_update:
             return self.get_knowledge_message(message_id)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         values = (
             1 if content is not None else 0,
             content,
@@ -1113,7 +1119,7 @@ class SqliteTaskRepository:
             now,
             message_id,
         )
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE knowledge_messages
@@ -1149,9 +1155,9 @@ class SqliteTaskRepository:
         agent_round: int = 1,
         agent_state: dict[str, object] | None = None,
     ) -> dict[str, object] | None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         job_id = uuid4().hex
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO knowledge_jobs (
@@ -1175,14 +1181,14 @@ class SqliteTaskRepository:
         return self.get_knowledge_job(job_id)
 
     def add_knowledge_job_items(self, job_id: str, items: list[tuple[str, str | None, int]]) -> None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.executemany(
                 "INSERT OR IGNORE INTO knowledge_job_items (job_id, task_id, video_id, position) VALUES (?, ?, ?, ?)",
                 [(job_id, task_id, video_id, position) for task_id, video_id, position in items],
             )
 
     def get_knowledge_job(self, job_id: str) -> dict[str, object] | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             job = cursor.execute("SELECT * FROM knowledge_jobs WHERE job_id = ?", (job_id,)).fetchone()
             if job is None:
                 return None
@@ -1213,8 +1219,8 @@ class SqliteTaskRepository:
         agent_round: int | None = None,
         agent_state: dict[str, object] | None = None,
     ) -> dict[str, object] | None:
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE knowledge_jobs
@@ -1245,8 +1251,8 @@ class SqliteTaskRepository:
         up_name: str = "",
         up_face_url: str = "",
     ) -> dict[str, object]:
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             existing = cursor.execute(
                 "SELECT * FROM up_subscriptions WHERE mid = ?", (str(mid),)
             ).fetchone()
@@ -1269,14 +1275,14 @@ class SqliteTaskRepository:
             return dict(row) if row is not None else {}
 
     def get_up_subscription(self, subscription_id: str) -> dict[str, object]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT * FROM up_subscriptions WHERE subscription_id = ?", (subscription_id,)
             ).fetchone()
         return dict(row) if row is not None else {}
 
     def get_up_subscription_by_mid(self, mid: str) -> dict[str, object] | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT * FROM up_subscriptions WHERE mid = ?", (str(mid),)
             ).fetchone()
@@ -1287,17 +1293,17 @@ class SqliteTaskRepository:
         if enabled_only:
             sql += " WHERE enabled = 1"
         sql += " ORDER BY created_at ASC"
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(sql).fetchall()
         return [dict(row) for row in rows]
 
     def update_up_subscription(self, subscription_id: str, **fields: object) -> dict[str, object]:
         if not fields:
             return self.get_up_subscription(subscription_id)
-        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        fields["updated_at"] = datetime.now(UTC).isoformat()
         columns = ", ".join(f"{key} = ?" for key in fields)
         values = list(fields.values()) + [subscription_id]
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 f"UPDATE up_subscriptions SET {columns} WHERE subscription_id = ?",  # noqa: S608
                 values,
@@ -1305,7 +1311,7 @@ class SqliteTaskRepository:
         return self.get_up_subscription(subscription_id)
 
     def delete_up_subscription(self, subscription_id: str) -> None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 "DELETE FROM up_detected_videos WHERE subscription_id = ?", (subscription_id,)
             )
@@ -1326,8 +1332,8 @@ class SqliteTaskRepository:
         description: str = "",
     ) -> tuple[str, bool]:
         """幂等插入检出记录，返回 (detection_id, 是否新插入)。"""
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT detection_id FROM up_detected_videos WHERE subscription_id = ? AND bvid = ?",
                 (subscription_id, bvid),
@@ -1351,14 +1357,14 @@ class SqliteTaskRepository:
         return detection_id, True
 
     def get_up_detected_video(self, detection_id: str) -> dict[str, object] | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT * FROM up_detected_videos WHERE detection_id = ?", (detection_id,)
             ).fetchone()
         return dict(row) if row is not None else None
 
     def get_up_detection_by_bvid(self, subscription_id: str, bvid: str) -> dict[str, object] | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT * FROM up_detected_videos WHERE subscription_id = ? AND bvid = ?",
                 (subscription_id, bvid),
@@ -1380,7 +1386,7 @@ class SqliteTaskRepository:
         if unread_only:
             where.append("read_at IS NULL")
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             total_row = cursor.execute(
                 f"SELECT COUNT(*) AS count FROM up_detected_videos {where_sql}",  # noqa: S608
                 params,
@@ -1396,14 +1402,14 @@ class SqliteTaskRepository:
         return [dict(row) for row in rows], int(total_row["count"] if total_row else 0)
 
     def count_unread_up_dynamics(self) -> int:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT COUNT(*) AS count FROM up_detected_videos WHERE read_at IS NULL"
             ).fetchone()
         return int(row["count"] if row else 0)
 
     def count_unread_up_dynamics_by_subscription(self, subscription_id: str) -> int:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 """
                 SELECT COUNT(*) AS count FROM up_detected_videos
@@ -1419,8 +1425,8 @@ class SqliteTaskRepository:
         subscription_id: str | None = None,
     ) -> int:
         """标记已读：传 detection_ids 标指定条目；传 subscription_id 标该 UP 全部；都传 None 标全部。"""
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             if detection_ids is not None:
                 if not detection_ids:
                     return 0
@@ -1453,10 +1459,10 @@ class SqliteTaskRepository:
     def update_up_detected_video(self, detection_id: str, **fields: object) -> None:
         if not fields:
             return
-        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        fields["updated_at"] = datetime.now(UTC).isoformat()
         columns = ", ".join(f"{key} = ?" for key in fields)
         values = list(fields.values()) + [detection_id]
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 f"UPDATE up_detected_videos SET {columns} WHERE detection_id = ?",  # noqa: S608
                 values,
@@ -1464,7 +1470,7 @@ class SqliteTaskRepository:
 
     def list_up_detections_pending_task_status(self, limit: int = 50) -> list[dict[str, object]]:
         """任务已提交但未达终态的检出记录（轮询器每轮顺手刷新冗余状态）。"""
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT * FROM up_detected_videos
@@ -1483,7 +1489,7 @@ class SqliteTaskRepository:
         不限制 video_id：入库前崩溃（video_id 为空）与提交前崩溃（video_id 已回填）
         都要能补提交。
         """
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT * FROM up_detected_videos
@@ -1497,7 +1503,7 @@ class SqliteTaskRepository:
 
     def list_up_detections_missing_asset(self, limit: int = 50) -> list[dict[str, object]]:
         """已检出但未关联资产的记录（入库与提交之间崩溃的补偿路径）。"""
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT * FROM up_detected_videos
@@ -1509,7 +1515,8 @@ class SqliteTaskRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def _row_to_knowledge_conversation(self, row: sqlite3.Row) -> dict[str, object]:
+    def _row_to_knowledge_conversation(self, row: Any) -> dict[str, object]:
+
         return {
             "conversation_id": row["conversation_id"],
             "title": row["title"],
@@ -1520,7 +1527,7 @@ class SqliteTaskRepository:
             "preview": str(row["preview"] or "")[:240],
         }
 
-    def _row_to_knowledge_message(self, row: sqlite3.Row) -> dict[str, object]:
+    def _row_to_knowledge_message(self, row: Any) -> dict[str, object]:
         return {
             "message_id": row["message_id"],
             "conversation_id": row["conversation_id"],
@@ -1538,7 +1545,7 @@ class SqliteTaskRepository:
         }
 
     def list_recoverable_tasks(self) -> list[TaskRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT
@@ -1555,7 +1562,7 @@ class SqliteTaskRepository:
 
     def list_offpeak_waiting_tasks(self) -> list[TaskRecord]:
         """所有等待低峰期恢复 LLM 阶段的任务（由 OffPeakScheduler 消费）。"""
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT
@@ -1571,7 +1578,7 @@ class SqliteTaskRepository:
         return [self._row_to_record(row) for row in rows]
 
     def list_tasks_for_video(self, video_id: str) -> list[TaskRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             asset_row = cursor.execute(
                 "SELECT canonical_id FROM video_assets WHERE video_id = ?",
                 (video_id,),
@@ -1596,7 +1603,7 @@ class SqliteTaskRepository:
         return [self._row_to_record(row) for row in rows]
 
     def get_task(self, task_id: str) -> TaskRecord | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 """
                 SELECT
@@ -1612,7 +1619,7 @@ class SqliteTaskRepository:
         return self._row_to_record(row) if row is not None else None
 
     def delete_task(self, task_id: str) -> bool:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT video_id FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row is None:
                 return False
@@ -1639,7 +1646,7 @@ class SqliteTaskRepository:
                             latest_error_message = NULL, updated_at = ?
                         WHERE video_id = ?
                         """,
-                        (datetime.now(timezone.utc).isoformat(), video_id),
+                        (datetime.now(UTC).isoformat(), video_id),
                     )
                 else:
                     cursor.execute(
@@ -1659,7 +1666,7 @@ class SqliteTaskRepository:
         return True
 
     def delete_video_asset(self, video_id: str) -> bool:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             video_row = cursor.execute(
                 "SELECT canonical_id, cover_url FROM video_assets WHERE video_id = ?",
                 (video_id,),
@@ -1692,8 +1699,8 @@ class SqliteTaskRepository:
         return True
 
     def set_video_global_visibility(self, video_id: str, visible: bool) -> VideoAssetRecord | None:
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT video_id FROM video_assets WHERE video_id = ?", (video_id,)).fetchone()
             if row is None:
                 return None
@@ -1708,8 +1715,8 @@ class SqliteTaskRepository:
         normalized_collection_id = str(collection_id or "").strip()
         if not normalized_collection_id:
             return
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             collection = cursor.execute(
                 "SELECT visibility_initialized FROM video_collections WHERE collection_id = ?",
                 (normalized_collection_id,),
@@ -1746,8 +1753,8 @@ class SqliteTaskRepository:
         normalized_video_id = str(video_id or "").strip()
         if not normalized_collection_id or not normalized_video_id:
             return None
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             membership = cursor.execute(
                 """
                 SELECT 1
@@ -1783,8 +1790,8 @@ class SqliteTaskRepository:
         normalized_collection_id = str(collection_id or "").strip()
         if not normalized_collection_id:
             return
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE video_collection_items
@@ -1814,8 +1821,8 @@ class SqliteTaskRepository:
         if not collection_id:
             raise ValueError("Collection id is required.")
         raw_items = payload.get("items") if isinstance(payload.get("items"), list) else []
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             current = cursor.execute(
                 "SELECT created_at, auto_check_on_open, global_order, owner_mid, owner_name, owner_face, owner_url, folder_id, folder_order, folder_pinned, is_favorite, favorite_updated_at, global_pinned FROM video_collections WHERE collection_id = ?",
                 (collection_id,),
@@ -1955,8 +1962,8 @@ class SqliteTaskRepository:
         if not collection_id:
             raise ValueError("Collection id is required.")
         raw_items = [item for item in (payload.get("items") if isinstance(payload.get("items"), list) else []) if isinstance(item, dict)]
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             existing = cursor.execute(
                 "SELECT bvid FROM video_collection_items WHERE collection_id = ?",
                 (collection_id,),
@@ -2042,9 +2049,9 @@ class SqliteTaskRepository:
         bvids: list[str] | None = None,
     ) -> list[dict[str, object]]:
         normalized = {str(bvid).strip() for bvid in (bvids or []) if str(bvid).strip()}
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         added: list[dict[str, object]] = []
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             collection = cursor.execute(
                 "SELECT pending_items_json FROM video_collections WHERE collection_id = ?",
                 (collection_id,),
@@ -2117,8 +2124,8 @@ class SqliteTaskRepository:
         view_sort_mode: str | None = None,
         view_group_mode: str | None = None,
     ) -> VideoCollectionResponse | None:
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             collection = cursor.execute(
                 "SELECT collection_id FROM video_collections WHERE collection_id = ?",
                 (collection_id,),
@@ -2152,8 +2159,8 @@ class SqliteTaskRepository:
         ordered_bvids: list[str],
     ) -> VideoCollectionResponse | None:
         normalized = [str(bvid).strip() for bvid in ordered_bvids]
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             collection = cursor.execute(
                 "SELECT collection_id FROM video_collections WHERE collection_id = ?",
                 (collection_id,),
@@ -2195,8 +2202,8 @@ class SqliteTaskRepository:
         return self.get_video_collection(collection_id)
 
     def set_video_collection_favorite(self, collection_id: str, is_favorite: bool) -> VideoCollectionResponse | None:
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT collection_id FROM video_collections WHERE collection_id = ?", (collection_id,)).fetchone()
             if row is None:
                 return None
@@ -2214,8 +2221,8 @@ class SqliteTaskRepository:
             if value and value not in seen:
                 seen.add(value)
                 normalized.append(value)
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT collection_id, folder_id, folder_order, folder_pinned FROM video_collections WHERE collection_id = ?", (collection_id,)).fetchone()
             if row is None or any(not self._folder_exists(cursor, folder_id) for folder_id in normalized):
                 return None
@@ -2261,9 +2268,9 @@ class SqliteTaskRepository:
             values.append(1 if folder_pinned else 0)
         if not updates:
             return self.get_video_collection(collection_id)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         values.extend([now, collection_id])
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT collection_id FROM video_collections WHERE collection_id = ?", (collection_id,)).fetchone()
             if row is None:
                 return None
@@ -2276,8 +2283,8 @@ class SqliteTaskRepository:
         return self.get_video_collection(collection_id)
 
     def delete_video_collection(self, collection_id: str, *, detach_contents: bool) -> list[str] | None:
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             collection = cursor.execute("SELECT collection_id FROM video_collections WHERE collection_id = ?", (collection_id,)).fetchone()
             if collection is None:
                 return None
@@ -2308,7 +2315,7 @@ class SqliteTaskRepository:
         where_clause = "collection_id = ?"
         if not include_source_removed:
             where_clause += " AND source_present = 1"
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             collection = cursor.execute(
                 "SELECT collection_id FROM video_collections WHERE collection_id = ?",
                 (collection_id,),
@@ -2321,7 +2328,7 @@ class SqliteTaskRepository:
             ).fetchall()
         return list(dict.fromkeys(str(row["video_id"]) for row in rows if row["video_id"]))
 
-    def _next_collection_order(self, cursor: sqlite3.Cursor, folder_id: str | None) -> float:
+    def _next_collection_order(self, cursor: Any, folder_id: str | None) -> float:
         if not folder_id:
             return 0
         row = cursor.execute(
@@ -2336,13 +2343,13 @@ class SqliteTaskRepository:
         return (max(values) if values else 0) + 1000
 
     def list_video_collections(self) -> list[VideoCollectionResponse]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute("SELECT collection_id FROM video_collections ORDER BY global_order ASC, updated_at DESC").fetchall()
         return [collection for row in rows if (collection := self.get_video_collection(str(row["collection_id"]))) is not None]
 
     def get_video_collection(self, collection_id: str) -> VideoCollectionResponse | None:
         self.reconcile_video_collection_assets(collection_id)
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             collection = cursor.execute(
                 """
                 SELECT collection_id, title, source_url, cover_url, auto_check_on_open, last_checked_at, pending_items_json,
@@ -2365,10 +2372,39 @@ class SqliteTaskRepository:
                 """,
                 (collection_id,),
             ).fetchall()
+            # Batch-load member assets in one query: per-item get_video_asset
+            # costs one network round-trip each, which is minutes over a
+            # remote MySQL link for large collections.
+            member_ids = list(dict.fromkeys(str(row["video_id"]) for row in items if row["video_id"]))
+            asset_rows: dict[str, Any] = {}
+            if member_ids:
+                placeholders = ", ".join("?" for _ in member_ids)
+                asset_rows = {
+                    str(row["video_id"]): row
+                    for row in cursor.execute(
+                        """
+                        SELECT
+                            {columns}
+                        FROM video_assets v
+                        LEFT JOIN task_results r ON r.task_id = v.latest_task_id
+                        WHERE v.video_id IN ({placeholders})
+                        """.format(columns=self._select_video_columns("v"), placeholders=placeholders),
+                        tuple(member_ids),
+                    ).fetchall()
+                }
+            folder_map = self._folder_ids_map(member_ids)
         response_items: list[VideoCollectionItemResponse] = []
+        asset_records: dict[str, VideoAssetRecord] = {}
         current_bvid = _collection_current_bvid(str(collection["source_url"] or ""))
         for row in items:
-            asset = self.get_video_asset(str(row["video_id"])) if row["video_id"] else None
+            video_id = str(row["video_id"]) if row["video_id"] else ""
+            asset = None
+            if video_id and video_id in asset_rows:
+                asset = self._row_to_video_asset(
+                    asset_rows[video_id],
+                    folder_ids=folder_map.get(video_id, []),
+                )
+                asset_records[video_id] = asset
             row_bvid = str(row["bvid"])
             response_items.append(
                 VideoCollectionItemResponse(
@@ -2411,8 +2447,7 @@ class SqliteTaskRepository:
                 or asset.latest_task_completed_at
                 or asset.latest_task_created_at
                 or asset.updated_at
-                for asset in (self.get_video_asset(str(row["video_id"])) for row in items)
-                if asset is not None
+                for asset in asset_records.values()
             ),
             default=None,
         )
@@ -2459,14 +2494,14 @@ class SqliteTaskRepository:
         )
 
     def get_library_preferences(self) -> VideoLibraryPreferencesResponse:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             value = self._get_library_preference(cursor, "new_video_position", "front")
         return VideoLibraryPreferencesResponse(new_video_position="back" if value == "back" else "front")
 
     def update_library_preferences(self, *, new_video_position: str) -> VideoLibraryPreferencesResponse:
         normalized = "back" if new_video_position == "back" else "front"
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO library_preferences (key, value, updated_at)
@@ -2478,7 +2513,7 @@ class SqliteTaskRepository:
         return VideoLibraryPreferencesResponse(new_video_position=normalized)
 
     def list_video_folders(self) -> list[VideoFolderResponse]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT folder_id, parent_id, name, position, created_at, updated_at
@@ -2492,8 +2527,8 @@ class SqliteTaskRepository:
         normalized_name = str(name or "").strip()
         if not normalized_name:
             return None
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             if parent_id is not None and not self._folder_exists(cursor, parent_id):
                 return None
             row = cursor.execute(
@@ -2514,7 +2549,7 @@ class SqliteTaskRepository:
         return folder
 
     def get_video_folder(self, folder_id: str) -> VideoFolderResponse | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 """
                 SELECT folder_id, parent_id, name, position, created_at, updated_at
@@ -2526,7 +2561,7 @@ class SqliteTaskRepository:
         return self._row_to_video_folder(row) if row is not None else None
 
     def list_video_ids_in_folder(self, folder_id: str) -> list[str]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 "SELECT video_id FROM video_folder_memberships WHERE folder_id = ? ORDER BY folder_order ASC, video_id ASC",
                 (folder_id,),
@@ -2541,8 +2576,8 @@ class SqliteTaskRepository:
         parent_id: str | None | object = _UNSET,
         position: float | None = None,
     ) -> VideoFolderResponse | None:
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             current = cursor.execute(
                 "SELECT folder_id, parent_id, name, position FROM video_folders WHERE folder_id = ?",
                 (folder_id,),
@@ -2572,7 +2607,7 @@ class SqliteTaskRepository:
         return self.get_video_folder(folder_id)
 
     def delete_video_folder(self, folder_id: str) -> bool:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             if not self._folder_exists(cursor, folder_id):
                 return False
             folder_ids = [folder_id, *self._descendant_folder_ids(cursor, folder_id)]
@@ -2583,13 +2618,13 @@ class SqliteTaskRepository:
                 SET folder_id = NULL, folder_order = ?, folder_pinned = 0, updated_at = ?
                 WHERE folder_id IN ({placeholders})
                 """,
-                (self._next_video_order(cursor, "folder_order", None), datetime.now(timezone.utc).isoformat(), *folder_ids),
+                (self._next_video_order(cursor, "folder_order", None), datetime.now(UTC).isoformat(), *folder_ids),
             )
             cursor.execute(f"DELETE FROM video_folder_memberships WHERE folder_id IN ({placeholders})", tuple(folder_ids))
             cursor.execute(f"DELETE FROM video_collection_folder_memberships WHERE folder_id IN ({placeholders})", tuple(folder_ids))
             cursor.execute(
                 f"UPDATE video_collections SET folder_id = NULL, folder_order = ?, folder_pinned = 0, updated_at = ? WHERE folder_id IN ({placeholders})",
-                (self._next_collection_order(cursor, None), datetime.now(timezone.utc).isoformat(), *folder_ids),
+                (self._next_collection_order(cursor, None), datetime.now(UTC).isoformat(), *folder_ids),
             )
             cursor.execute(f"DELETE FROM video_folders WHERE folder_id IN ({placeholders})", tuple(folder_ids))
         return True
@@ -2598,8 +2633,8 @@ class SqliteTaskRepository:
         return self.set_video_folders(video_id, [] if folder_id is None else [folder_id])
 
     def add_video_to_folder(self, video_id: str, folder_id: str) -> VideoAssetRecord | None:
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT video_id FROM video_assets WHERE video_id = ?", (video_id,)).fetchone()
             if row is None:
                 return None
@@ -2632,11 +2667,11 @@ class SqliteTaskRepository:
         return self.get_video_asset(video_id)
 
     def set_video_folders(self, video_id: str, folder_ids: list[str]) -> VideoAssetRecord | None:
-        updated_at = datetime.now(timezone.utc).isoformat()
+        updated_at = datetime.now(UTC).isoformat()
         normalized_folder_ids = [str(folder_id).strip() for folder_id in folder_ids if str(folder_id).strip()]
         seen: set[str] = set()
         unique_folder_ids = [folder_id for folder_id in normalized_folder_ids if not (folder_id in seen or seen.add(folder_id))]
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT video_id FROM video_assets WHERE video_id = ?", (video_id,)).fetchone()
             if row is None:
                 return None
@@ -2705,9 +2740,9 @@ class SqliteTaskRepository:
         if not updates:
             return self.get_video_asset(video_id)
         updates.append("updated_at = ?")
-        values.append(datetime.now(timezone.utc).isoformat())
+        values.append(datetime.now(UTC).isoformat())
         values.append(video_id)
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT video_id FROM video_assets WHERE video_id = ?", (video_id,)).fetchone()
             if row is None:
                 return None
@@ -2730,8 +2765,8 @@ class SqliteTaskRepository:
         if not ordered_ids:
             return []
         field = "global_order" if folder_id == "__global__" else "folder_order"
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             if folder_id not in (None, "__global__") and not self._folder_exists(cursor, folder_id):
                 return []
             valid_ids = self._video_ids_in_scope(cursor, folder_id)
@@ -2766,8 +2801,8 @@ class SqliteTaskRepository:
             return
         if len({(kind, item_id) for kind, item_id in normalized}) != len(normalized):
             raise ValueError("Library reorder payload contains duplicate items.")
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             if folder_id not in (None, "__global__") and not self._folder_exists(cursor, folder_id):
                 raise ValueError("Folder not found.")
             if folder_id == "__global__":
@@ -2853,8 +2888,8 @@ class SqliteTaskRepository:
         if not normalized_tag:
             return False
 
-        created_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        created_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             video = cursor.execute("SELECT video_id FROM video_assets WHERE video_id = ?", (video_id,)).fetchone()
             if video is None:
                 return False
@@ -2884,12 +2919,12 @@ class SqliteTaskRepository:
         normalized_tag = str(tag or "").strip()
         if not normalized_tag:
             return False
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute("DELETE FROM video_tags WHERE video_id = ? AND tag = ?", (video_id, normalized_tag))
             return cursor.rowcount > 0
 
     def list_video_tags(self, video_id: str) -> list[VideoTagRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT video_id, tag, source, confidence, created_at
@@ -2911,7 +2946,7 @@ class SqliteTaskRepository:
         ]
 
     def list_all_tags(self) -> list[dict[str, object]]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT tag, COUNT(*) AS count
@@ -2936,7 +2971,7 @@ class SqliteTaskRepository:
         ]
 
     def list_all_video_tags(self) -> list[VideoTagRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT video_id, tag, source, confidence, created_at
@@ -2956,7 +2991,7 @@ class SqliteTaskRepository:
         ]
 
     def list_untagged_video_ids(self) -> list[str]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT v.video_id
@@ -2969,7 +3004,7 @@ class SqliteTaskRepository:
         return [row["video_id"] for row in rows]
 
     def replace_knowledge_chunks(self, video_id: str, chunks: list[KnowledgeIndexChunkRecord]) -> int:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute("DELETE FROM knowledge_index WHERE video_id = ?", (video_id,))
             for chunk in chunks:
                 cursor.execute(
@@ -2995,16 +3030,16 @@ class SqliteTaskRepository:
         return len(chunks)
 
     def delete_knowledge_chunks(self, video_id: str) -> bool:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute("DELETE FROM knowledge_index WHERE video_id = ?", (video_id,))
             return cursor.rowcount > 0
 
     def clear_knowledge_chunks(self) -> None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute("DELETE FROM knowledge_index")
 
     def list_knowledge_chunks(self, video_id: str | None = None) -> list[KnowledgeIndexChunkRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             if video_id:
                 rows = cursor.execute(
                     """
@@ -3044,13 +3079,13 @@ class SqliteTaskRepository:
         ]
 
     def get_knowledge_chunk_count(self) -> int:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT COUNT(*) AS count FROM knowledge_index").fetchone()
         return int(row["count"]) if row is not None else 0
 
     def set_video_favorite(self, video_id: str, is_favorite: bool) -> VideoAssetRecord | None:
-        favorite_updated_at = datetime.now(timezone.utc).isoformat() if is_favorite else None
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        favorite_updated_at = datetime.now(UTC).isoformat() if is_favorite else None
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute("SELECT video_id FROM video_assets WHERE video_id = ?", (video_id,)).fetchone()
             if row is None:
                 return None
@@ -3065,8 +3100,8 @@ class SqliteTaskRepository:
         return self.get_video_asset(video_id)
 
     def update_status(self, task_id: str, status: TaskStatus) -> TaskRecord | None:
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
                 (status.value, updated_at, task_id),
@@ -3106,7 +3141,7 @@ class SqliteTaskRepository:
 
     def _save_result_locked(
         self,
-        cursor: sqlite3.Cursor,
+        cursor: Any,
         task_id: str,
         result: TaskResult,
         updated_at: str,
@@ -3133,8 +3168,8 @@ class SqliteTaskRepository:
             )
 
     def save_result(self, task_id: str, result: TaskResult) -> TaskRecord | None:
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             self._save_result_locked(cursor, task_id, result, updated_at)
         return self.get_task(task_id)
 
@@ -3145,8 +3180,8 @@ class SqliteTaskRepository:
     ) -> TaskRecord | None:
         """Read, transform, and persist one task result under the repository lock."""
 
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 "SELECT result_json FROM task_results WHERE task_id = ?",
                 (task_id,),
@@ -3159,8 +3194,8 @@ class SqliteTaskRepository:
         return self.get_task(task_id)
 
     def update_error(self, task_id: str, error_code: str, error_message: str) -> TaskRecord | None:
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE tasks SET error_code = ?, error_message = ?, updated_at = ? WHERE task_id = ?
@@ -3188,8 +3223,8 @@ class SqliteTaskRepository:
         payload: dict[str, object] | None = None,
     ) -> TaskEventRecord:
         event = TaskEventRecord(task_id=task_id, stage=stage, progress=progress, message=message, payload=payload or {})
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        updated_at = datetime.now(UTC).isoformat()
+        with self._lock, self._session.cursor() as cursor:
             latest_row = cursor.execute(
                 """
                 SELECT created_at
@@ -3232,7 +3267,7 @@ class SqliteTaskRepository:
         return event
 
     def list_events(self, task_id: str) -> list[TaskEventRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
                 SELECT event_id, task_id, stage, progress, message, payload_json, created_at
@@ -3245,7 +3280,7 @@ class SqliteTaskRepository:
         return [self._row_to_event(row) for row in rows]
 
     def list_events_after(self, task_id: str, after_created_at: str | None) -> list[TaskEventRecord]:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             if after_created_at:
                 rows = cursor.execute(
                     """
@@ -3269,7 +3304,7 @@ class SqliteTaskRepository:
         return [self._row_to_event(row) for row in rows]
 
     def get_latest_event(self, task_id: str) -> TaskEventRecord | None:
-        with self._lock, sqlite_cursor(self._connection) as cursor:
+        with self._lock, self._session.cursor() as cursor:
             row = cursor.execute(
                 """
                 SELECT event_id, task_id, stage, progress, message, payload_json, created_at
@@ -3301,7 +3336,7 @@ class SqliteTaskRepository:
 
     def _insert_task_record(
         self,
-        cursor: sqlite3.Cursor,
+        cursor: Any,
         record: TaskRecord,
         payload: dict[str, str | None],
     ) -> None:
@@ -3346,7 +3381,7 @@ class SqliteTaskRepository:
                 ),
             )
 
-    def _row_to_record(self, row: sqlite3.Row) -> TaskRecord:
+    def _row_to_record(self, row: Any) -> TaskRecord:
         task_input = TaskInput.model_validate(json.loads(row["task_input_json"]))
         result = TaskResult.model_validate(json.loads(row["result_json"])) if row["result_json"] else None
         return TaskRecord(
@@ -3363,7 +3398,7 @@ class SqliteTaskRepository:
             error_message=row["error_message"],
         )
 
-    def _row_to_video_asset(self, row: sqlite3.Row) -> VideoAssetRecord:
+    def _row_to_video_asset(self, row: Any, folder_ids: list[str] | None = None) -> VideoAssetRecord:
         latest_result = (
             TaskResult.model_validate(json.loads(row["latest_result_json"]))
             if row["latest_result_json"]
@@ -3393,7 +3428,7 @@ class SqliteTaskRepository:
             is_favorite=bool(row["is_favorite"]),
             favorite_updated_at=datetime.fromisoformat(row["favorite_updated_at"]) if row["favorite_updated_at"] else None,
             folder_id=row["folder_id"],
-            folder_ids=self._folder_ids_for_video(row["video_id"]),
+            folder_ids=self._folder_ids_for_video(row["video_id"]) if folder_ids is None else folder_ids,
             global_order=float(row["global_order"] or 0),
             folder_order=float(row["folder_order"] or 0),
             global_pinned=bool(row["global_pinned"]),
@@ -3403,7 +3438,7 @@ class SqliteTaskRepository:
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
-    def _row_to_video_folder(self, row: sqlite3.Row) -> VideoFolderResponse:
+    def _row_to_video_folder(self, row: Any) -> VideoFolderResponse:
         return VideoFolderResponse(
             folder_id=row["folder_id"],
             parent_id=row["parent_id"],
@@ -3413,11 +3448,11 @@ class SqliteTaskRepository:
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
-    def _folder_exists(self, cursor: sqlite3.Cursor, folder_id: str) -> bool:
+    def _folder_exists(self, cursor: Any, folder_id: str) -> bool:
         return cursor.execute("SELECT folder_id FROM video_folders WHERE folder_id = ?", (folder_id,)).fetchone() is not None
 
     def _folder_ids_for_video(self, video_id: str) -> list[str]:
-        rows = self._connection.execute(
+        rows = self._session.execute(
             """
             SELECT folder_id
             FROM video_folder_memberships
@@ -3425,17 +3460,37 @@ class SqliteTaskRepository:
             ORDER BY created_at ASC, folder_order ASC
             """,
             (video_id,),
-        ).fetchall()
+        )
         return [str(row["folder_id"]) for row in rows]
+
+    def _folder_ids_map(self, video_ids: list[str]) -> dict[str, list[str]]:
+        """Batch variant of ``_folder_ids_for_video``: one query for many ids."""
+        unique_ids = list(dict.fromkeys(str(video_id) for video_id in video_ids if video_id))
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_ids)
+        rows = self._session.execute(
+            f"""
+            SELECT video_id, folder_id
+            FROM video_folder_memberships
+            WHERE video_id IN ({placeholders})
+            ORDER BY created_at ASC, folder_order ASC
+            """,
+            tuple(unique_ids),
+        )
+        folder_map: dict[str, list[str]] = {}
+        for row in rows:
+            folder_map.setdefault(str(row["video_id"]), []).append(str(row["folder_id"]))
+        return folder_map
 
     def _folder_ids_for_collection(self, collection_id: str) -> list[str]:
-        rows = self._connection.execute(
+        rows = self._session.execute(
             "SELECT folder_id FROM video_collection_folder_memberships WHERE collection_id = ? ORDER BY created_at ASC, folder_order ASC",
             (collection_id,),
-        ).fetchall()
+        )
         return [str(row["folder_id"]) for row in rows]
 
-    def _video_ids_in_scope(self, cursor: sqlite3.Cursor, folder_id: str | None) -> set[str]:
+    def _video_ids_in_scope(self, cursor: Any, folder_id: str | None) -> set[str]:
         if folder_id == "__global__":
             rows = cursor.execute("SELECT video_id FROM video_assets WHERE is_global_visible = 1").fetchall()
         elif folder_id is None:
@@ -3462,7 +3517,7 @@ class SqliteTaskRepository:
             ).fetchall()
         return {str(row["video_id"]) for row in rows}
 
-    def _descendant_folder_ids(self, cursor: sqlite3.Cursor, folder_id: str) -> list[str]:
+    def _descendant_folder_ids(self, cursor: Any, folder_id: str) -> list[str]:
         descendants: list[str] = []
         pending = [folder_id]
         while pending:
@@ -3473,7 +3528,7 @@ class SqliteTaskRepository:
             pending.extend(child_ids)
         return descendants
 
-    def _row_to_event(self, row: sqlite3.Row) -> TaskEventRecord:
+    def _row_to_event(self, row: Any) -> TaskEventRecord:
         return TaskEventRecord(
             event_id=row["event_id"],
             task_id=row["task_id"],
@@ -3483,3 +3538,8 @@ class SqliteTaskRepository:
             created_at=datetime.fromisoformat(row["created_at"]),
             payload=json.loads(row["payload_json"]),
         )
+
+
+# Backward-compatible alias: the repository is dialect-agnostic and driven by
+# a DatabaseSession; the historical name is kept for existing imports.
+SqliteTaskRepository = TaskRepository

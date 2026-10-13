@@ -33,6 +33,16 @@ from video_sum_service.settings_manager import SettingsUpdatePayload
 import sqlite3
 
 
+from video_sum_service.settings_store import FileSettingsStore
+
+
+def point_settings_store(manager, path) -> None:
+    """Redirect the module-level manager's store at a temp path."""
+    manager._settings_path = path
+    manager._store = FileSettingsStore(path)
+
+
+
 def test_update_settings_reuses_environment_probe(monkeypatch, tmp_path: Path) -> None:
     previous = ServiceSettings(
         data_dir=tmp_path / "data-prev",
@@ -138,7 +148,7 @@ def test_serialize_settings_includes_persisted_file_flag(monkeypatch, tmp_path: 
         runtime_channel="base",
     )
     settings_manager._settings = current
-    monkeypatch.setattr(settings_manager, "_settings_path", tmp_path / "data" / "settings.json")
+    point_settings_store(settings_manager, tmp_path / "data" / "settings.json")
 
     payload = serialize_settings(current, environment_info={"cudaAvailable": False, "runtimeChannel": "base"})
 
@@ -222,7 +232,7 @@ def test_update_settings_preserves_configured_api_keys_when_payload_is_blank(tmp
         siliconflow_embedding_api_key="saved-embedding-key",
     )
     settings_manager._settings = current
-    settings_manager._settings_path = tmp_path / "settings.json"
+    point_settings_store(settings_manager, tmp_path / "settings.json")
 
     next_settings = settings_manager.save(
         SettingsUpdatePayload(
@@ -253,7 +263,7 @@ def test_update_settings_preserves_configured_api_keys_when_payload_is_masked(tm
         siliconflow_embedding_api_key="saved-embedding-key",
     )
     settings_manager._settings = current
-    settings_manager._settings_path = tmp_path / "settings.json"
+    point_settings_store(settings_manager, tmp_path / "settings.json")
 
     next_settings = settings_manager.save(
         SettingsUpdatePayload(
@@ -284,7 +294,7 @@ def test_update_settings_replaces_api_keys_when_payload_has_new_values(tmp_path:
         siliconflow_embedding_api_key="saved-embedding-key",
     )
     settings_manager._settings = current
-    settings_manager._settings_path = tmp_path / "settings.json"
+    point_settings_store(settings_manager, tmp_path / "settings.json")
 
     next_settings = settings_manager.save(
         SettingsUpdatePayload(
@@ -309,7 +319,7 @@ def test_update_settings_persists_visual_summary_options(tmp_path: Path) -> None
         runtime_channel="base",
     )
     settings_manager._settings = current
-    settings_manager._settings_path = tmp_path / "settings.json"
+    point_settings_store(settings_manager, tmp_path / "settings.json")
 
     next_settings = settings_manager.save(
         SettingsUpdatePayload(

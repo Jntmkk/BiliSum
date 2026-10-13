@@ -82,6 +82,19 @@ jobs:
   validate:
     runs-on: ubuntu-latest
 
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: video-sum-test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pvideo-sum-test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -117,6 +130,11 @@ jobs:
 
       - name: Run Python tests
         run: python -m pytest -q
+
+      - name: Run MySQL integration tests
+        env:
+          VIDEO_SUM_TEST_MYSQL_URL: mysql://root:video-sum-test@127.0.0.1:3306
+        run: python -m pytest tests/unit/test_task_repository_mysql.py tests/unit/test_settings_mysql.py -q
 
       - name: Run npx CLI tests
         run: node --test "packages/npx/test/*.test.js"
