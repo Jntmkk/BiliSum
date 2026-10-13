@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -87,6 +88,24 @@ def test_image_proxy_falls_back_to_local_file_when_signing_fails(monkeypatch, tm
 
     assert isinstance(response, FileResponse)
     assert response.status_code == 200
+
+
+def test_image_proxy_backfills_oss_for_existing_local_cache(monkeypatch, tmp_path: Path) -> None:
+    fake_bucket = FakeBucket()
+    cache_dir = install_fakes(monkeypatch, tmp_path, fake_bucket, oss_settings())
+
+    key = hashlib.sha1(IMAGE_URL.encode("utf-8")).hexdigest()
+    (cache_dir / key).write_bytes(b"fake-image-bytes")
+    (cache_dir / f"{key}.json").write_text(
+        json.dumps({"content_type": "image/jpeg"}), encoding="utf-8"
+    )
+
+    response = dynamics_router.proxy_dynamics_image(url=IMAGE_URL, request=SimpleNamespace())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.headers["location"].startswith("https://signed.example/up-images/")
+    assert len(fake_bucket.puts) == 1
+    assert fake_bucket.puts[0][1] == b"fake-image-bytes"
 
 
 def test_image_proxy_serves_local_file_without_oss(monkeypatch, tmp_path: Path) -> None:
