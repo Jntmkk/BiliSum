@@ -246,6 +246,127 @@
   border-color: var(--border-default);
 }
 
+.title-bar-version {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-subtle);
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.title-bar-feedback-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.title-bar-feedback-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  padding: 16px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-xl);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.98);
+  transition: opacity var(--transition-sidebar-fade), transform var(--transition-sidebar-snap);
+  backdrop-filter: blur(12px);
+  z-index: 1200;
+}
+
+.title-bar-feedback-popover.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+[data-theme="dark"] .title-bar-feedback-popover {
+  background: var(--bg-card);
+  border-color: var(--border-default);
+}
+
+.title-bar-feedback-form {
+  display: grid;
+  gap: 12px;
+}
+
+.title-bar-feedback-field {
+  display: grid;
+  gap: 6px;
+}
+
+.title-bar-feedback-field > span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.title-bar-feedback-field .select-field,
+.title-bar-feedback-field .textarea-field {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.title-bar-feedback-field .textarea-field {
+  resize: vertical;
+  min-height: 84px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.title-bar-feedback-form .primary-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.title-bar-feedback-error {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
+.title-bar-feedback-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.title-bar-feedback-success {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+
+.title-bar-feedback-success p {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.title-bar-feedback-success a {
+  font-size: 0.82rem;
+  color: var(--brand-500);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.title-bar-feedback-success a:hover {
+  text-decoration: underline;
+}
+
 .title-bar-queue-wrap {
   position: relative;
   display: flex;

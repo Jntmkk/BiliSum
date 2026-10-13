@@ -67,6 +67,14 @@ export type LlmTestPayload = Partial<ServiceSettings> & {
   llm_test_scope?: "main" | "knowledge" | "visual";
 };
 
+export type FeedbackCategory = "bug" | "feature" | "question" | "other";
+
+export type FeedbackSubmitInput = {
+  category: FeedbackCategory;
+  description: string;
+  context: Record<string, unknown>;
+};
+
 export type BilibiliCookieCaptureResponse = {
   cookiesFile: string;
   cookieCount: number;
@@ -163,6 +171,17 @@ export const api = {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     });
+  },
+  submitFeedback(input: FeedbackSubmitInput) {
+    return fetchJson<{ issue_url: string; issue_number: number }>("/api/v1/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        category: input.category,
+        description: input.description,
+        context: input.context,
+      }),
+    }).then((result) => ({ issueUrl: result.issue_url, issueNumber: result.issue_number }));
   },
   getHealth() {
     return fetchJson<{ status: string }>("/health");

@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -902,3 +902,14 @@ class UpDynamicsMarkReadRequest(BaseModel):
 
 class UpDynamicsRefreshResponse(BaseModel):
     accepted: bool
+
+
+class FeedbackCreateRequest(BaseModel):
+    category: Literal["bug", "feature", "question", "other"] = "other"
+    description: str = Field(min_length=5, max_length=5000)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackCreateResponse(BaseModel):
+    issue_url: str
+    issue_number: int

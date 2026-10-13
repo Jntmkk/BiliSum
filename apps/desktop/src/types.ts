@@ -652,6 +652,7 @@ export type SystemInfo = {
     name: string;
     version: string;
   };
+  deployment?: "docker" | "local" | string;
   taskModel?: {
     statuses?: string[];
   };
