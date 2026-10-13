@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from http.cookiejar import Cookie
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import video_sum_service.bilibili_cookie_store as cookie_store_module
+import video_sum_service.bilibili_cookies as bilibili_cookies
+import video_sum_service.bilibili_wbi as bilibili_wbi
 from video_sum_infra.config import ServiceSettings
 from video_sum_infra.db import SQLiteSession
 from video_sum_service.bilibili_cookie_store import (
@@ -39,6 +42,28 @@ def _reset_singleton():
     reset_bilibili_cookie_store_for_tests()
     yield
     reset_bilibili_cookie_store_for_tests()
+
+
+def make_cookie(name: str, value: str, domain: str = ".bilibili.com") -> Cookie:
+    return Cookie(
+        version=0,
+        name=name,
+        value=value,
+        port=None,
+        port_specified=False,
+        domain=domain,
+        domain_specified=True,
+        domain_initial_dot=domain.startswith("."),
+        path="/",
+        path_specified=True,
+        secure=True,
+        expires=2000000000,
+        discard=False,
+        comment=None,
+        comment_url=None,
+        rest={},
+        rfc2109=False,
+    )
 
 
 def make_db_store(
@@ -211,6 +236,34 @@ def test_get_store_uses_database_backend_for_mysql(monkeypatch, tmp_path: Path) 
     )
 
     assert isinstance(get_bilibili_cookie_store(), DbBilibiliCookieStore)
+
+
+def test_login_on_one_instance_is_visible_to_another(monkeypatch, tmp_path: Path) -> None:
+    """实例 A 扫码登录写入共享库，实例 B（另一台机器、另一个卷）读到新登录态。"""
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    session = SQLiteSession(connection)
+    store_a = DbBilibiliCookieStore(lambda: session, tmp_path / "a" / "cookies" / "bilibili.txt")
+    store_b = DbBilibiliCookieStore(lambda: session, tmp_path / "b" / "cookies" / "bilibili.txt")
+
+    # 实例 A：扫码登录
+    monkeypatch.setattr(
+        cookie_store_module, "settings_manager", SimpleNamespace(current=SimpleNamespace(data_dir=tmp_path / "a"))
+    )
+    monkeypatch.setattr(bilibili_cookies, "get_bilibili_cookie_store", lambda: store_a)
+    bilibili_cookies._write_bilibili_cookies([make_cookie("SESSDATA", "session-value")])
+
+    # 实例 B：自己的卷里什么都没有，但读取时应拿到共享库里的登录态
+    monkeypatch.setattr(
+        cookie_store_module, "settings_manager", SimpleNamespace(current=SimpleNamespace(data_dir=tmp_path / "b"))
+    )
+    monkeypatch.setattr(cookie_store_module, "get_bilibili_cookie_store", lambda: store_b)
+
+    header = bilibili_wbi.load_bilibili_cookie_header()
+
+    assert header is not None
+    assert "SESSDATA=session-value" in header
+    assert (tmp_path / "b" / "cookies" / "bilibili.txt").exists()
 
 
 def test_materialize_returns_target_path_without_database(tmp_path: Path) -> None:
