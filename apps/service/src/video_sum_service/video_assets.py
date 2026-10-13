@@ -1035,7 +1035,12 @@ def probe_video_asset(
 
 
 def localize_video_cover(task_store: SqliteTaskRepository, video: VideoAssetRecord) -> VideoAssetRecord:
-    if not video.cover_url and str(video.platform or "").lower() == "bilibili":
+    cover_file_missing = (
+        bool(video.cover_url)
+        and video.cover_url.startswith("/media/")
+        and not (COVER_CACHE_DIR / video.cover_url.rsplit("/", 1)[-1]).exists()
+    )
+    if (not video.cover_url or cover_file_missing) and str(video.platform or "").lower() == "bilibili":
         probe_url = video.source_url or f"https://www.bilibili.com/video/{str(video.canonical_id).split('?', 1)[0]}"
         try:
             refreshed, _pages, _requires_selection = probe_video_asset(probe_url, force_refresh=True)
@@ -1043,6 +1048,10 @@ def localize_video_cover(task_store: SqliteTaskRepository, video: VideoAssetReco
             logger.warning("failed to refresh missing bilibili cover: %s", video.video_id, exc_info=True)
             return video
         merged = merge_video_asset_metadata(video, refreshed)
+        if merged.cover_url and not merged.cover_url.startswith("/media/"):
+            localized = cache_cover_image(merged.cover_url, merged.canonical_id, referer_url=merged.source_url)
+            if localized != merged.cover_url:
+                merged = merged.model_copy(update={"cover_url": localized})
         if merged.cover_url:
             return task_store.upsert_video_asset(merged)
         return video
