@@ -116,6 +116,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error('访问密钥无效，请在「我的」页检查访问密钥');
+    }
     throw new Error(`请求失败: ${res.status}`);
   }
   return res.json() as Promise<T>;

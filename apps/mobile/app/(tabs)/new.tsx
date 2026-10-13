@@ -85,7 +85,7 @@ export default function NewTaskScreen() {
         );
       }
       // 回到任务列表
-      router.push('/(tabs)/');
+      router.push('/(tabs)');
       if (details.length > 1) {
         Alert.alert('已提交', `已提交 ${details.length} 个总结任务`);
       }
@@ -119,7 +119,7 @@ export default function NewTaskScreen() {
           { borderColor: isDark ? '#444' : '#ccc' },
         ]}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { color: isDark ? '#eee' : '#222' }]}
           placeholder="https://www.bilibili.com/video/BV…"
           placeholderTextColor="#999"
           autoCapitalize="none"

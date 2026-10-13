@@ -14,3 +14,7 @@ export async function saveServerUrl(url: string): Promise<void> {
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(KEY_ACCESS_TOKEN);
 }
+
+export async function saveAccessToken(token: string): Promise<void> {
+  await AsyncStorage.setItem(KEY_ACCESS_TOKEN, token);
+}
