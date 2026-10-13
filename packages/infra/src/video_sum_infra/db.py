@@ -17,11 +17,12 @@ from urllib.parse import unquote, urlparse
 
 DatabaseDialect = Literal["sqlite", "mysql"]
 
-# Columns that participate in primary/unique keys or foreign keys. MySQL
-# cannot index TEXT columns without a prefix length, so these become
-# VARCHAR(191) (191 * 4 bytes = 764 bytes, safely inside the 3072-byte InnoDB
-# index limit even for composite keys). All current id values fit: uuid hex is
-# 32 chars, bilibili canonical ids are short, local ids are 30 chars.
+# Columns that participate in primary/unique/foreign keys or secondary
+# indexes. MySQL cannot index TEXT columns without a prefix length, so these
+# become VARCHAR(191) (191 * 4 bytes = 764 bytes, safely inside the 3072-byte
+# InnoDB index limit even for composite keys). All current values fit:
+# uuid hex is 32 chars, bilibili ids are short, local ids are 30 chars,
+# ISO timestamps are ~32 chars.
 _ID_COLUMNS = {
     "video_id",
     "folder_id",
@@ -38,6 +39,10 @@ _ID_COLUMNS = {
     "canonical_id",
     "parent_id",
     "assistant_message_id",
+    "subscription_id",
+    "detection_id",
+    "mid",
+    "read_at",
     "key",
 }
 
@@ -155,6 +160,14 @@ def rewrite_sql(sql: str, dialect: DatabaseDialect) -> str:
     # MySQL has no IF NOT EXISTS for indexes; the duplicate-name error (1061)
     # is swallowed at execute time to keep initialize() idempotent.
     text = re.sub(r"\b(CREATE(?: UNIQUE)? INDEX) IF NOT EXISTS\b", r"\1", text, flags=re.IGNORECASE)
+    # MySQL has no partial indexes; a full index on the same column still
+    # serves the IS NULL queries (leftmost-prefix), so drop the WHERE tail.
+    text = re.sub(
+        r"\b(CREATE(?: UNIQUE)? INDEX\s+\w+\s+ON\s+\w+\([^)]*\))\s+WHERE\s+.+$",
+        r"\1",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     if "library_preferences" in text:
         # ``key`` is a reserved word in MySQL; quoting it is always legal.
         text = re.sub(r"(?<![\w'])key(?![\w'])", "`key`", text)
