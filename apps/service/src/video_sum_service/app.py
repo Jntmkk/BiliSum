@@ -201,6 +201,17 @@ def video_detail_page(video_id: str) -> FileResponse:
     return frontend_shell_response()
 
 
+@app.get("/library", include_in_schema=False)
+def library_page() -> FileResponse:
+    return frontend_shell_response()
+
+
+@app.get("/collections/{collection_id}", include_in_schema=False)
+def collection_detail_page(collection_id: str) -> FileResponse:
+    del collection_id
+    return frontend_shell_response()
+
+
 @app.get("/settings", include_in_schema=False)
 @app.get("/settings/{subpath:path}", include_in_schema=False)
 def settings_page(subpath: str = "") -> FileResponse:
