@@ -248,3 +248,31 @@ def test_startup_backfill_runs(repository: TaskRepository) -> None:
     repository.initialize()
     repository.initialize()
     assert repository.get_knowledge_chunk_count() == 0
+
+
+def test_up_dynamics_flow(repository: TaskRepository) -> None:
+    """UP subscription + detection rows round-trip on MySQL (merged up_* feature)."""
+    subscription = repository.create_up_subscription("12345", up_name="测试UP")
+    assert subscription["mid"] == "12345"
+
+    fetched = repository.get_up_subscription(str(subscription["subscription_id"]))
+    assert fetched is not None and fetched["up_name"] == "测试UP"
+
+    listed = repository.list_up_subscriptions()
+    assert len(listed) == 1
+
+    detection_id, created = repository.insert_up_detected_video(
+        str(subscription["subscription_id"]),
+        "BV1xx411c7mD",
+        title="新视频",
+    )
+    assert created is True
+
+    unread, unread_total = repository.list_up_detected_videos(unread_only=True)
+    assert unread_total == 1
+    assert unread[0]["title"] == "新视频"
+
+    marked = repository.mark_up_dynamics_read(detection_ids=[detection_id])
+    assert marked == 1
+    _, unread_total_after = repository.list_up_detected_videos(unread_only=True)
+    assert unread_total_after == 0
