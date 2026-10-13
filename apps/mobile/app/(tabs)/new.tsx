@@ -251,8 +251,9 @@ const styles = StyleSheet.create({
     borderColor: '#e0e0e0',
   },
   resultTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
+    lineHeight: 22,
     marginBottom: 6,
   },
   resultMeta: {

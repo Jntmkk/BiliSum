@@ -80,8 +80,8 @@ export default function TaskDetailScreen() {
 
   const markdownStyles = {
     body: { color: isDark ? '#eee' : '#222', fontSize: 15, lineHeight: 24 },
-    heading2: { fontSize: 18, fontWeight: '700' as const, marginVertical: 10 },
-    heading3: { fontSize: 16, fontWeight: '600' as const, marginVertical: 8 },
+    heading2: { fontSize: 17, fontWeight: '700' as const, marginVertical: 10 },
+    heading3: { fontSize: 15, fontWeight: '600' as const, marginVertical: 8 },
     code_inline: {
       backgroundColor: isDark ? '#2a2a2a' : '#f0f0f0',
       borderRadius: 4,
@@ -322,6 +322,7 @@ const styles = StyleSheet.create({
   timelineTitle: {
     fontSize: 15,
     fontWeight: '600',
+    lineHeight: 20,
     marginBottom: 4,
   },
   timelineSummary: {

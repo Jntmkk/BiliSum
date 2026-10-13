@@ -208,9 +208,11 @@ function TaskCard({
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
       <View style={styles.cardBody}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle} numberOfLines={2}>
-            {displayTitle}
-          </Text>
+          <RNView style={styles.cardTitleBox}>
+            <Text style={styles.cardTitle} numberOfLines={2}>
+              {displayTitle}
+            </Text>
+          </RNView>
           <RNView style={[styles.badge, { backgroundColor: meta.color }]}>
             <Text style={styles.badgeText}>{meta.label}</Text>
           </RNView>
@@ -272,7 +274,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 8,
   },
@@ -300,10 +302,13 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 6,
   },
-  cardTitle: {
+  cardTitleBox: {
     flex: 1,
-    fontSize: 16,
+  },
+  cardTitle: {
+    fontSize: 15,
     fontWeight: '600',
+    lineHeight: 20,
   },
   badge: {
     borderRadius: 4,
