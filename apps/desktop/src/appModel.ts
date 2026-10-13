@@ -1,5 +1,5 @@
 import type { UpdateInfo } from "./components/UpdateDialog";
-import type { EnvironmentInfo, ServiceSettings, SystemInfo, TaskStatus, VideoAssetSummary, VideoCollection, VideoFolder, VideoLibraryPreferences } from "./types";
+import type { EnvironmentInfo, ServiceSettings, SystemInfo, TaskStatus, VideoAssetSummary, VideoCollectionSummary, VideoFolder, VideoLibraryPreferences } from "./types";
 
 export type Snapshot = {
   serviceOnline: boolean;
@@ -8,7 +8,7 @@ export type Snapshot = {
   settings: ServiceSettings | null;
   videos: VideoAssetSummary[];
   folders: VideoFolder[];
-  collections: VideoCollection[];
+  collections: VideoCollectionSummary[];
   libraryPreferences: VideoLibraryPreferences;
   error: string;
   runtimeInitializing: boolean;

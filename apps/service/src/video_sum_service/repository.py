@@ -17,6 +17,7 @@ from video_sum_service.schemas import (
     VideoAssetRecord,
     VideoCollectionItemResponse,
     VideoCollectionResponse,
+    VideoCollectionSummaryResponse,
     VideoFolderResponse,
     VideoLibraryPreferencesResponse,
     VideoPageOptionResponse,
@@ -2346,6 +2347,144 @@ class TaskRepository:
         with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute("SELECT collection_id FROM video_collections ORDER BY global_order ASC, updated_at DESC").fetchall()
         return [collection for row in rows if (collection := self.get_video_collection(str(row["collection_id"]))) is not None]
+
+    def list_video_collection_bvids(self, collection_id: str) -> list[str]:
+        normalized = str(collection_id or "").strip()
+        if not normalized:
+            return []
+        rows = self._session.execute(
+            "SELECT bvid FROM video_collection_items WHERE collection_id = ? AND source_present = 1",
+            (normalized,),
+        )
+        return [str(row["bvid"]) for row in rows]
+
+    def _collection_item_stats(self, collection_ids: list[str]) -> dict[str, Any]:
+        unique_ids = list(dict.fromkeys(str(cid) for cid in collection_ids if cid))
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_ids)
+        rows = self._session.execute(
+            f"""
+            SELECT
+                i.collection_id AS collection_id,
+                COUNT(*) AS item_count,
+                SUM(CASE WHEN r.task_id IS NOT NULL THEN 1 ELSE 0 END) AS summarized_count,
+                MAX(COALESCE(v.last_summary_at, v.latest_task_completed_at, v.latest_task_created_at, v.updated_at)) AS latest_touch
+            FROM video_collection_items i
+            LEFT JOIN video_assets v ON v.video_id = i.video_id
+            LEFT JOIN task_results r ON r.task_id = v.latest_task_id
+            WHERE i.source_present = 1 AND i.collection_id IN ({placeholders})
+            GROUP BY i.collection_id
+            """,
+            tuple(unique_ids),
+        )
+        return {str(row["collection_id"]): row for row in rows}
+
+    def _collection_folder_ids_map(self, collection_ids: list[str]) -> dict[str, list[str]]:
+        unique_ids = list(dict.fromkeys(str(cid) for cid in collection_ids if cid))
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_ids)
+        rows = self._session.execute(
+            f"""
+            SELECT collection_id, folder_id
+            FROM video_collection_folder_memberships
+            WHERE collection_id IN ({placeholders})
+            ORDER BY created_at ASC, folder_order ASC
+            """,
+            tuple(unique_ids),
+        )
+        folder_map: dict[str, list[str]] = {}
+        for row in rows:
+            folder_map.setdefault(str(row["collection_id"]), []).append(str(row["folder_id"]))
+        return folder_map
+
+    def _collection_summary_from_row(self, collection: Any, stats: dict[str, Any], folder_map: dict[str, list[str]]) -> VideoCollectionSummaryResponse:
+        collection_id = str(collection["collection_id"])
+        stat = stats.get(collection_id)
+        item_count = int(stat["item_count"]) if stat is not None and stat["item_count"] is not None else 0
+        summarized_count = int(stat["summarized_count"]) if stat is not None and stat["summarized_count"] is not None else 0
+        latest_touch = stat["latest_touch"] if stat is not None else None
+        view_sort_mode = str(collection["view_sort_mode"] or "source")
+        if view_sort_mode not in {
+            "source",
+            "source_desc",
+            "recent_summary",
+            "recent_update",
+            "duration",
+            "custom",
+        }:
+            view_sort_mode = "source"
+        view_group_mode = str(collection["view_group_mode"] or "none")
+        if view_group_mode not in {"none", "status", "source_section"}:
+            view_group_mode = "none"
+        return VideoCollectionSummaryResponse(
+            collection_id=collection_id,
+            title=str(collection["title"]),
+            cover_url=str(collection["cover_url"] or ""),
+            global_order=float(collection["global_order"] or 0),
+            folder_order=float(collection["folder_order"] or 0),
+            folder_id=collection["folder_id"],
+            folder_ids=folder_map.get(collection_id, []),
+            global_pinned=bool(collection["global_pinned"]),
+            folder_pinned=bool(collection["folder_pinned"]),
+            is_favorite=bool(collection["is_favorite"]),
+            favorite_updated_at=datetime.fromisoformat(collection["favorite_updated_at"]) if collection["favorite_updated_at"] else None,
+            latest_video_updated_at=datetime.fromisoformat(str(latest_touch)) if latest_touch else None,
+            owner_mid=str(collection["owner_mid"] or "") or None,
+            owner_name=str(collection["owner_name"] or "") or None,
+            owner_face=str(collection["owner_face"] or "") or None,
+            owner_url=str(collection["owner_url"] or "") or None,
+            source_url=str(collection["source_url"] or ""),
+            item_count=item_count,
+            summarized_count=summarized_count,
+            unsummarized_count=max(0, item_count - summarized_count),
+            last_checked_at=datetime.fromisoformat(collection["last_checked_at"]) if collection["last_checked_at"] else None,
+            auto_check_on_open=bool(collection["auto_check_on_open"]),
+            view_sort_mode=view_sort_mode,
+            view_group_mode=view_group_mode,
+        )
+
+    def list_video_collection_summaries(self) -> list[VideoCollectionSummaryResponse]:
+        """Metadata-only variant of list_video_collections: three queries total
+        instead of per-collection item loads, so it stays fast over a remote
+        MySQL link. Member items are served by get_video_collection on demand."""
+        rows = self._session.execute(
+            """
+            SELECT collection_id, title, source_url, cover_url, auto_check_on_open, last_checked_at, pending_items_json,
+                   global_order, folder_id, folder_order, folder_pinned, global_pinned, is_favorite, favorite_updated_at,
+                   owner_mid, owner_name, owner_face, owner_url, view_sort_mode, view_group_mode
+            FROM video_collections
+            ORDER BY global_order ASC, updated_at DESC
+            """
+        )
+        rows = list(rows)
+        if not rows:
+            return []
+        collection_ids = [str(row["collection_id"]) for row in rows]
+        stats = self._collection_item_stats(collection_ids)
+        folder_map = self._collection_folder_ids_map(collection_ids)
+        return [self._collection_summary_from_row(row, stats, folder_map) for row in rows]
+
+    def get_video_collection_summary(self, collection_id: str) -> VideoCollectionSummaryResponse | None:
+        normalized = str(collection_id or "").strip()
+        if not normalized:
+            return None
+        rows = self._session.execute(
+            """
+            SELECT collection_id, title, source_url, cover_url, auto_check_on_open, last_checked_at, pending_items_json,
+                   global_order, folder_id, folder_order, folder_pinned, global_pinned, is_favorite, favorite_updated_at,
+                   owner_mid, owner_name, owner_face, owner_url, view_sort_mode, view_group_mode
+            FROM video_collections WHERE collection_id = ?
+            """,
+            (normalized,),
+        )
+        rows = list(rows)
+        if not rows:
+            return None
+        stats = self._collection_item_stats([normalized])
+        folder_map = self._collection_folder_ids_map([normalized])
+        return self._collection_summary_from_row(rows[0], stats, folder_map)
 
     def get_video_collection(self, collection_id: str) -> VideoCollectionResponse | None:
         self.reconcile_video_collection_assets(collection_id)

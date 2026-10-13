@@ -220,6 +220,44 @@ class VideoCollectionResponse(BaseModel):
     new_items: list[VideoCollectionItemResponse] = Field(default_factory=list)
 
 
+class VideoCollectionSummaryResponse(BaseModel):
+    """Collection metadata for library listings, built without loading member
+    items. Clients fetch full detail (with items) via
+    GET /videos/collections/{collection_id} on demand."""
+
+    collection_id: str
+    title: str
+    cover_url: str = ""
+    global_order: float = 0
+    folder_order: float = 0
+    folder_id: str | None = None
+    folder_ids: list[str] = Field(default_factory=list)
+    global_pinned: bool = False
+    folder_pinned: bool = False
+    is_favorite: bool = False
+    favorite_updated_at: datetime | None = None
+    latest_video_updated_at: datetime | None = None
+    owner_mid: str | None = None
+    owner_name: str | None = None
+    owner_face: str | None = None
+    owner_url: str | None = None
+    item_count: int = 0
+    source_url: str = ""
+    summarized_count: int = 0
+    unsummarized_count: int = 0
+    last_checked_at: datetime | None = None
+    auto_check_on_open: bool = True
+    view_sort_mode: Literal[
+        "source",
+        "source_desc",
+        "recent_summary",
+        "recent_update",
+        "duration",
+        "custom",
+    ] = "source"
+    view_group_mode: Literal["none", "status", "source_section"] = "none"
+
+
 class VideoAssetSummaryResponse(BaseModel):
     video_id: str
     canonical_id: str
@@ -329,14 +367,14 @@ class VideoProbeResponse(BaseModel):
     cached: bool = False
     requires_selection: bool = False
     pages: list[VideoPageOptionResponse] = Field(default_factory=list)
-    collection: VideoCollectionResponse | None = None
+    collection: VideoCollectionSummaryResponse | None = None
 
 
 class VideoLibraryResponse(BaseModel):
     videos: list[VideoAssetSummaryResponse] = Field(default_factory=list)
     folders: list[VideoFolderResponse] = Field(default_factory=list)
     preferences: VideoLibraryPreferencesResponse = Field(default_factory=VideoLibraryPreferencesResponse)
-    collections: list[VideoCollectionResponse] = Field(default_factory=list)
+    collections: list[VideoCollectionSummaryResponse] = Field(default_factory=list)
 
 
 class VideoCollectionSettingsRequest(BaseModel):

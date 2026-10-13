@@ -3,7 +3,7 @@ import type { CSSProperties, MouseEvent, SyntheticEvent } from "react";
 
 import { platformLabel } from "../appModel";
 import { GripVerticalIcon, PinIcon, StarIcon } from "./AppIcons";
-import type { VideoCollection } from "../types";
+import type { VideoCollectionSummary } from "../types";
 import { formatDateTime } from "../utils";
 
 export function CollectionCard({
@@ -14,7 +14,7 @@ export function CollectionCard({
   onToggleGlobalPin,
   onToggleFolderPin,
 }: {
-  collection: VideoCollection;
+  collection: VideoCollectionSummary;
   canPinInFolder?: boolean;
   onOpenContextMenu?: (event: MouseEvent, collectionId: string) => void;
   onToggleFavorite?: (collectionId: string, nextFavorite: boolean) => Promise<unknown>;
@@ -85,7 +85,7 @@ export function CollectionListItem({
   onToggleGlobalPin,
   onToggleFolderPin,
 }: {
-  collection: VideoCollection;
+  collection: VideoCollectionSummary;
   onOpenContextMenu?: (event: MouseEvent, collectionId: string) => void;
   className?: string;
   dragHandleProps?: Record<string, unknown>;

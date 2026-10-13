@@ -61,7 +61,7 @@ import {
   type LibraryScope,
   type LibraryViewMode,
 } from "../libraryModel";
-import type { VideoAssetDetail, VideoAssetSummary, VideoCollection, VideoFolder } from "../types";
+import type { VideoAssetDetail, VideoAssetSummary, VideoCollection, VideoCollectionSummary, VideoFolder } from "../types";
 import { formatDateTime, formatDuration, taskStatusLabel } from "../utils";
 import { UpDynamicsPanel } from "./UpDynamicsPanel";
 
@@ -120,7 +120,7 @@ type OptimisticLibraryOrder = {
 
 type LibraryItem =
   | { kind: "video"; id: string; order: number; pinned: boolean; video: VideoAssetSummary }
-  | { kind: "collection"; id: string; order: number; pinned: boolean; collection: VideoCollection };
+  | { kind: "collection"; id: string; order: number; pinned: boolean; collection: VideoCollectionSummary };
 
 function getLibraryItemId(item: LibraryItem) {
   return item.kind === "video" ? item.video.video_id : `collection:${item.collection.collection_id}`;
@@ -1328,7 +1328,7 @@ function CollectionContextMenu({
   onCancelDelete,
   onDelete,
 }: {
-  collection: VideoCollection;
+  collection: VideoCollectionSummary;
   x: number;
   y: number;
   submenuSide: "left" | "right";
@@ -1493,7 +1493,7 @@ function SortableCollectionCard({
   onToggleFavorite,
   onSetCollectionPin,
 }: {
-  collection: VideoCollection;
+  collection: VideoCollectionSummary;
   canPinInFolder: boolean;
   onOpenContextMenu?: (event: MouseEvent, collectionId: string) => void;
   onToggleFavorite(collectionId: string, nextFavorite: boolean): Promise<VideoCollection>;
@@ -1527,7 +1527,7 @@ function SortableCollectionListItem({
   onToggleFavorite,
   onSetCollectionPin,
 }: {
-  collection: VideoCollection;
+  collection: VideoCollectionSummary;
   canPinInFolder: boolean;
   onOpenContextMenu?: (event: MouseEvent, collectionId: string) => void;
   onToggleFavorite(collectionId: string, nextFavorite: boolean): Promise<VideoCollection>;

@@ -32,6 +32,7 @@ import { CollectionDetailPage } from "./pages/CollectionDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
 import { generateUuid } from "./utils";
+import { toCollectionSummary } from "./types";
 import type { CollectionGroupMode, CollectionSortMode, VideoAssetSummary, VideoCollection, VideoCollectionItem, VideoPageBatchOption, VideoProbeResult } from "./types";
 
 const PROMPT_PRESET_STORAGE_KEY = "bilisum.promptPresetId";
@@ -691,11 +692,12 @@ export function App() {
   }
 
   function mergeCollection(collection: VideoCollection) {
+    const summary = toCollectionSummary(collection);
     setSnapshot((current) => ({
       ...current,
-      collections: current.collections.some((item) => item.collection_id === collection.collection_id)
-        ? current.collections.map((item) => item.collection_id === collection.collection_id ? collection : item)
-        : [collection, ...current.collections],
+      collections: current.collections.some((item) => item.collection_id === summary.collection_id)
+        ? current.collections.map((item) => item.collection_id === summary.collection_id ? summary : item)
+        : [summary, ...current.collections],
     }));
   }
 
@@ -759,15 +761,6 @@ export function App() {
   async function handlePromoteCollectionItem(collectionId: string, videoId: string) {
     const updated = await api.promoteVideoCollectionItem(collectionId, videoId);
     mergeVideos([updated]);
-    setSnapshot((current) => ({
-      ...current,
-      collections: current.collections.map((collection) => collection.collection_id !== collectionId
-        ? collection
-        : {
-          ...collection,
-          items: collection.items.map((item) => item.video_id === videoId ? { ...item, is_global_visible: true } : item),
-        }),
-    }));
     return updated;
   }
 
@@ -1066,9 +1059,10 @@ export function App() {
     try {
       const response = await api.probeVideo({ url: probeUrl.trim(), force_refresh: false });
       setProbePreview(response.video);
-      if (response.collection?.items?.length) {
+      if (response.collection?.item_count) {
+        const fullCollection = await api.getVideoCollection(response.collection.collection_id);
         setCollectionProbeVideo(response.video);
-        setCollectionProbe(response.collection);
+        setCollectionProbe(fullCollection);
         setCollectionProbeCached(response.cached);
         setCollectionDialogOpen(true);
         setSubmitStatus(`检测到合集《${response.collection.title}》，请先选择总结范围`);
