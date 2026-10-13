@@ -176,6 +176,11 @@ class WbiSigner:
         return self._img_key, self._sub_key
 
     def invalidate(self) -> None:
+        # 必须连 key 一起清：stale 判断依赖 time.monotonic()(系统启动时长)，
+        # 开机不足 _WBI_KEY_TTL_SECONDS 的机器上只清时间戳无法触发刷新，
+        # -352 重试会用相同 key 再失败。
+        self._img_key = ""
+        self._sub_key = ""
         self._fetched_at = 0.0
 
     def sign(self, client: httpx.Client, cookie_header: str, params: dict[str, object]) -> dict[str, object]:
