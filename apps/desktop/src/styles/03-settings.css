@@ -2949,6 +2949,26 @@
 }
 
 /* ── Toggle Switch ── */
+.settings-weekday-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-weekday-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-weekday-option input {
+  accent-color: var(--accent-primary, #4f7cff);
+}
+
 .settings-toggle-row {
   display: flex;
   align-items: center;

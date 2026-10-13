@@ -679,6 +679,23 @@ class ServiceSettings(BaseSettings):
     settings_schema_version: int = 2
     ytdlp_cookies_file: str = ""
     ytdlp_cookies_browser: str = ""
+    # UP 主动态监控：默认关闭；轮询间隔钳制在 60-3600 秒。
+    up_dynamics_enabled: bool = False
+    up_dynamics_poll_interval_seconds: int = 600
+    # 阿里云 OSS 图片转存（UP 动态头像/封面绕防盗链）。任一必填项留空则回退本地磁盘缓存。
+    oss_bucket: str = ""
+    oss_endpoint: str = ""
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
+    oss_public_base_url: str = ""
+    # 低峰期 LLM 调度：schedule=offpeak 的任务在转写完成后、LLM 高峰时段内
+    # 暂停（waiting_offpeak），到闲时自动恢复（DeepSeek 峰谷半价）。
+    # offpeak_schedule_default 只控制 UP 动态自动摄入的默认，不影响手动入口。
+    offpeak_schedule_default: bool = False
+    offpeak_timezone: str = "Asia/Shanghai"
+    offpeak_peak_windows: str = "09:00-12:00,14:00-18:00"
+    # Python weekday 数字，逗号分隔：周一=0 … 周日=6；空串 = 永不高峰。
+    offpeak_peak_weekdays: str = "0,1,2,3,4"
 
     model_config = SettingsConfigDict(
         env_prefix="VIDEO_SUM_",
@@ -770,6 +787,12 @@ class ServiceSettings(BaseSettings):
     def _coerce_positive_int(cls, value: int | str | None) -> int:
         parsed = int(value or 1)
         return max(1, parsed)
+
+    @field_validator("up_dynamics_poll_interval_seconds", mode="before")
+    @classmethod
+    def _coerce_up_dynamics_interval(cls, value: int | str | None) -> int:
+        parsed = int(value or 600)
+        return max(60, min(parsed, 3600))
 
     @field_validator("visual_evidence_image_quality", mode="before")
     @classmethod

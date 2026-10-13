@@ -1026,6 +1026,29 @@
   gap: 8px;
 }
 
+.multi-page-schedule-toggle,
+.collection-select-schedule-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.multi-page-schedule-toggle input,
+.collection-select-schedule-toggle input {
+  accent-color: var(--accent-primary, #4f7cff);
+}
+
+.multi-page-schedule-toggle small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
 .multi-page-item {
   width: 100%;
   display: grid;

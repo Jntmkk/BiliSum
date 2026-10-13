@@ -28,7 +28,10 @@ from video_sum_service.context import CACHE_STATIC_DIR, WEB_STATIC_DIR, access_t
 from video_sum_service.integrations import probe_asr_connection, probe_llm_connection
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.knowledge.job_coordinator import KnowledgeJobCoordinator
+from video_sum_service.offpeak import OffPeakScheduler
+from video_sum_service.up_dynamics import UpDynamicsWatcher
 from video_sum_service.routers.system import router as system_router
+from video_sum_service.routers.dynamics import router as dynamics_router
 from video_sum_service.routers.knowledge import router as knowledge_router
 from video_sum_service.routers.tasks import router as tasks_router
 from video_sum_service.routers.videos import router as videos_router
@@ -117,6 +120,12 @@ async def lifespan(app: FastAPI):
     knowledge_job_coordinator = KnowledgeJobCoordinator(repository, current_settings)
     knowledge_job_coordinator.start()
     app.state.knowledge_job_coordinator = knowledge_job_coordinator
+    up_dynamics_watcher = UpDynamicsWatcher(repository, app.state)
+    up_dynamics_watcher.start()
+    app.state.up_dynamics_watcher = up_dynamics_watcher
+    offpeak_scheduler = OffPeakScheduler(repository, app.state)
+    offpeak_scheduler.start()
+    app.state.offpeak_scheduler = offpeak_scheduler
     initialize_runtime_startup_state(app.state, current_settings)
     cli_idle.start_watchdog(repository)
     start_runtime_startup(app.state, repository, current_settings, recover_incomplete_tasks)
@@ -126,6 +135,8 @@ async def lifespan(app: FastAPI):
     finally:
         request_runtime_startup_shutdown(app.state)
         knowledge_job_coordinator.stop()
+        up_dynamics_watcher.stop()
+        offpeak_scheduler.stop()
         startup_thread = getattr(app.state, "runtime_startup_thread", None)
         if startup_thread is not None and startup_thread.is_alive():
             startup_thread.join(timeout=10)
@@ -148,6 +159,7 @@ app.include_router(system_router)
 app.include_router(videos_router)
 app.include_router(tasks_router)
 app.include_router(knowledge_router)
+app.include_router(dynamics_router)
 
 
 @app.middleware("http")

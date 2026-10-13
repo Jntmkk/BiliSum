@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,7 @@ from threading import Lock
 from uuid import uuid4
 
 from video_sum_core.models.tasks import TaskInput, TaskResult, TaskStatus
+from video_sum_core.utils import normalize_video_url
 from video_sum_infra.db import sqlite_cursor
 from video_sum_service.schemas import (
     KnowledgeIndexChunkRecord,
@@ -22,6 +24,18 @@ from video_sum_service.schemas import (
 )
 
 _UNSET = object()
+
+
+def _collection_current_bvid(source_url: str) -> str:
+    """从合集来源视频 URL 解析当前视频 bvid（小写），用于标记 is_current。"""
+    text = str(source_url or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(normalize_video_url(text).canonical_id or "").lower()
+    except Exception:
+        match = re.search(r"(BV[0-9A-Za-z]+)", text)
+        return match.group(1).lower() if match else ""
 
 
 class SqliteTaskRepository:
@@ -407,6 +421,71 @@ class SqliteTaskRepository:
                     FOREIGN KEY(job_id) REFERENCES knowledge_jobs(job_id),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS up_subscriptions (
+                    subscription_id TEXT PRIMARY KEY,
+                    mid TEXT NOT NULL,
+                    up_name TEXT NOT NULL DEFAULT '',
+                    up_face_url TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_checked_at TEXT,
+                    last_video_bvid TEXT,
+                    last_video_pubdate INTEGER,
+                    last_error TEXT,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_up_subscriptions_mid
+                ON up_subscriptions(mid)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS up_detected_videos (
+                    detection_id TEXT PRIMARY KEY,
+                    subscription_id TEXT NOT NULL,
+                    bvid TEXT NOT NULL,
+                    aid INTEGER,
+                    title TEXT NOT NULL DEFAULT '',
+                    cover_url TEXT NOT NULL DEFAULT '',
+                    duration INTEGER NOT NULL DEFAULT 0,
+                    pubdate INTEGER NOT NULL DEFAULT 0,
+                    description TEXT NOT NULL DEFAULT '',
+                    video_id TEXT,
+                    task_id TEXT,
+                    task_status TEXT,
+                    read_at TEXT,
+                    detection_status TEXT NOT NULL DEFAULT 'new',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(subscription_id) REFERENCES up_subscriptions(subscription_id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_up_detected_unique
+                ON up_detected_videos(subscription_id, bvid)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_up_detected_feed
+                ON up_detected_videos(subscription_id, pubdate DESC)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_up_detected_unread
+                ON up_detected_videos(read_at) WHERE read_at IS NULL
                 """
             )
             cursor.execute(
@@ -1156,6 +1235,280 @@ class SqliteTaskRepository:
             )
         return self.get_knowledge_job(job_id)
 
+    # ------------------------------------------------------------------
+    # UP 主动态监控（up_subscriptions / up_detected_videos）
+    # ------------------------------------------------------------------
+
+    def create_up_subscription(
+        self,
+        mid: str,
+        up_name: str = "",
+        up_face_url: str = "",
+    ) -> dict[str, object]:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            existing = cursor.execute(
+                "SELECT * FROM up_subscriptions WHERE mid = ?", (str(mid),)
+            ).fetchone()
+            if existing is not None:
+                return dict(existing)
+            subscription_id = uuid4().hex
+            cursor.execute(
+                """
+                INSERT INTO up_subscriptions (
+                    subscription_id, mid, up_name, up_face_url, enabled,
+                    last_checked_at, last_video_bvid, last_video_pubdate,
+                    last_error, consecutive_failures, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 1, NULL, NULL, NULL, NULL, 0, ?, ?)
+                """,
+                (subscription_id, str(mid), up_name, up_face_url, now, now),
+            )
+            row = cursor.execute(
+                "SELECT * FROM up_subscriptions WHERE subscription_id = ?", (subscription_id,)
+            ).fetchone()
+            return dict(row) if row is not None else {}
+
+    def get_up_subscription(self, subscription_id: str) -> dict[str, object]:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute(
+                "SELECT * FROM up_subscriptions WHERE subscription_id = ?", (subscription_id,)
+            ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def get_up_subscription_by_mid(self, mid: str) -> dict[str, object] | None:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute(
+                "SELECT * FROM up_subscriptions WHERE mid = ?", (str(mid),)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_up_subscriptions(self, enabled_only: bool = False) -> list[dict[str, object]]:
+        sql = "SELECT * FROM up_subscriptions"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY created_at ASC"
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(sql).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_up_subscription(self, subscription_id: str, **fields: object) -> dict[str, object]:
+        if not fields:
+            return self.get_up_subscription(subscription_id)
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        columns = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [subscription_id]
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            cursor.execute(
+                f"UPDATE up_subscriptions SET {columns} WHERE subscription_id = ?",  # noqa: S608
+                values,
+            )
+        return self.get_up_subscription(subscription_id)
+
+    def delete_up_subscription(self, subscription_id: str) -> None:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            cursor.execute(
+                "DELETE FROM up_detected_videos WHERE subscription_id = ?", (subscription_id,)
+            )
+            cursor.execute(
+                "DELETE FROM up_subscriptions WHERE subscription_id = ?", (subscription_id,)
+            )
+
+    def insert_up_detected_video(
+        self,
+        subscription_id: str,
+        bvid: str,
+        *,
+        aid: int | None = None,
+        title: str = "",
+        cover_url: str = "",
+        duration: int = 0,
+        pubdate: int = 0,
+        description: str = "",
+    ) -> tuple[str, bool]:
+        """幂等插入检出记录，返回 (detection_id, 是否新插入)。"""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute(
+                "SELECT detection_id FROM up_detected_videos WHERE subscription_id = ? AND bvid = ?",
+                (subscription_id, bvid),
+            ).fetchone()
+            if row is not None:
+                return str(row["detection_id"]), False
+            detection_id = uuid4().hex
+            cursor.execute(
+                """
+                INSERT INTO up_detected_videos (
+                    detection_id, subscription_id, bvid, aid, title, cover_url, duration,
+                    pubdate, description, video_id, task_id, task_status, read_at,
+                    detection_status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 'new', ?, ?)
+                """,
+                (
+                    detection_id, subscription_id, bvid, aid, title, cover_url, int(duration),
+                    int(pubdate), description, now, now,
+                ),
+            )
+        return detection_id, True
+
+    def get_up_detected_video(self, detection_id: str) -> dict[str, object] | None:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute(
+                "SELECT * FROM up_detected_videos WHERE detection_id = ?", (detection_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_up_detection_by_bvid(self, subscription_id: str, bvid: str) -> dict[str, object] | None:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute(
+                "SELECT * FROM up_detected_videos WHERE subscription_id = ? AND bvid = ?",
+                (subscription_id, bvid),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_up_detected_videos(
+        self,
+        subscription_id: str | None = None,
+        unread_only: bool = False,
+        limit: int = 30,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, object]], int]:
+        where: list[str] = []
+        params: list[object] = []
+        if subscription_id is not None:
+            where.append("subscription_id = ?")
+            params.append(subscription_id)
+        if unread_only:
+            where.append("read_at IS NULL")
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            total_row = cursor.execute(
+                f"SELECT COUNT(*) AS count FROM up_detected_videos {where_sql}",  # noqa: S608
+                params,
+            ).fetchone()
+            rows = cursor.execute(
+                f"""
+                SELECT * FROM up_detected_videos {where_sql}
+                ORDER BY pubdate DESC, created_at DESC
+                LIMIT ? OFFSET ?
+                """,  # noqa: S608
+                params + [int(limit), int(offset)],
+            ).fetchall()
+        return [dict(row) for row in rows], int(total_row["count"] if total_row else 0)
+
+    def count_unread_up_dynamics(self) -> int:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute(
+                "SELECT COUNT(*) AS count FROM up_detected_videos WHERE read_at IS NULL"
+            ).fetchone()
+        return int(row["count"] if row else 0)
+
+    def count_unread_up_dynamics_by_subscription(self, subscription_id: str) -> int:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute(
+                """
+                SELECT COUNT(*) AS count FROM up_detected_videos
+                WHERE subscription_id = ? AND read_at IS NULL
+                """,
+                (subscription_id,),
+            ).fetchone()
+        return int(row["count"] if row else 0)
+
+    def mark_up_dynamics_read(
+        self,
+        detection_ids: list[str] | None = None,
+        subscription_id: str | None = None,
+    ) -> int:
+        """标记已读：传 detection_ids 标指定条目；传 subscription_id 标该 UP 全部；都传 None 标全部。"""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            if detection_ids is not None:
+                if not detection_ids:
+                    return 0
+                placeholders = ", ".join("?" for _ in detection_ids)
+                cursor.execute(
+                    f"""
+                    UPDATE up_detected_videos SET read_at = ?, updated_at = ?
+                    WHERE detection_id IN ({placeholders}) AND read_at IS NULL
+                    """,  # noqa: S608
+                    [now, now, *detection_ids],
+                )
+            elif subscription_id is not None:
+                cursor.execute(
+                    """
+                    UPDATE up_detected_videos SET read_at = ?, updated_at = ?
+                    WHERE subscription_id = ? AND read_at IS NULL
+                    """,
+                    (now, now, subscription_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE up_detected_videos SET read_at = ?, updated_at = ?
+                    WHERE read_at IS NULL
+                    """,
+                    (now, now),
+                )
+            return cursor.rowcount
+
+    def update_up_detected_video(self, detection_id: str, **fields: object) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        columns = ", ".join(f"{key} = ?" for key in fields)
+        values = list(fields.values()) + [detection_id]
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            cursor.execute(
+                f"UPDATE up_detected_videos SET {columns} WHERE detection_id = ?",  # noqa: S608
+                values,
+            )
+
+    def list_up_detections_pending_task_status(self, limit: int = 50) -> list[dict[str, object]]:
+        """任务已提交但未达终态的检出记录（轮询器每轮顺手刷新冗余状态）。"""
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT * FROM up_detected_videos
+                WHERE task_id IS NOT NULL
+                  AND task_status NOT IN ('completed', 'failed', 'cancelled')
+                ORDER BY updated_at ASC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_up_detections_missing_task(self, limit: int = 50) -> list[dict[str, object]]:
+        """已检出但任务未提交的记录（崩溃补偿路径，at-least-once 提交）。
+
+        不限制 video_id：入库前崩溃（video_id 为空）与提交前崩溃（video_id 已回填）
+        都要能补提交。
+        """
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT * FROM up_detected_videos
+                WHERE task_id IS NULL
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_up_detections_missing_asset(self, limit: int = 50) -> list[dict[str, object]]:
+        """已检出但未关联资产的记录（入库与提交之间崩溃的补偿路径）。"""
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT * FROM up_detected_videos
+                WHERE video_id IS NULL
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def _row_to_knowledge_conversation(self, row: sqlite3.Row) -> dict[str, object]:
         return {
             "conversation_id": row["conversation_id"],
@@ -1197,6 +1550,23 @@ class SqliteTaskRepository:
                 ORDER BY t.created_at ASC, t.task_id ASC
                 """,
                 (TaskStatus.QUEUED.value, TaskStatus.RUNNING.value),
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def list_offpeak_waiting_tasks(self) -> list[TaskRecord]:
+        """所有等待低峰期恢复 LLM 阶段的任务（由 OffPeakScheduler 消费）。"""
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT
+                    t.task_id, t.video_id, t.status, t.task_input_json, t.page_number, t.page_title,
+                    NULL AS result_json, t.error_code,
+                    t.error_message, t.created_at, t.updated_at
+                FROM tasks t
+                WHERE t.status = ?
+                ORDER BY t.created_at ASC, t.task_id ASC
+                """,
+                (TaskStatus.WAITING_OFFPEAK.value,),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
@@ -1996,8 +2366,10 @@ class SqliteTaskRepository:
                 (collection_id,),
             ).fetchall()
         response_items: list[VideoCollectionItemResponse] = []
+        current_bvid = _collection_current_bvid(str(collection["source_url"] or ""))
         for row in items:
             asset = self.get_video_asset(str(row["video_id"])) if row["video_id"] else None
+            row_bvid = str(row["bvid"])
             response_items.append(
                 VideoCollectionItemResponse(
                     position=int(row["position"] or 0),
@@ -2006,7 +2378,7 @@ class SqliteTaskRepository:
                         if row["custom_position"] is not None
                         else None
                     ),
-                    bvid=str(row["bvid"]),
+                    bvid=row_bvid,
                     title=str(row["title"] or row["bvid"]),
                     source_url=str(row["source_url"] or ""),
                     cover_url=str(row["cover_url"] or ""),
@@ -2024,6 +2396,7 @@ class SqliteTaskRepository:
                     last_summary_at=asset.last_summary_at if asset else None,
                     asset_updated_at=asset.updated_at if asset else None,
                     is_global_visible=bool(asset and asset.is_global_visible),
+                    is_current=bool(current_bvid) and row_bvid.lower() == current_bvid,
                 )
             )
         pending_items = [

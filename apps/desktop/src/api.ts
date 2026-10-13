@@ -30,6 +30,11 @@ import type {
   TaskMindMapResponse,
   TaskVisualEvidenceResponse,
   TaskSummary,
+  TaskSchedule,
+  UpDetectedVideo,
+  UpDynamicsFeed,
+  UpDynamicsStatus,
+  UpSubscription,
   VideoKnowledgeTagListResponse,
   VideoAssetDetail,
   VideoFolder,
@@ -115,6 +120,9 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
       throw new AuthRequiredError(detail);
     }
     throw new Error(detail);
+  }
+  if (response.status === 204) {
+    return null as T;
   }
   return response.json() as Promise<T>;
 }
@@ -300,6 +308,7 @@ export const api = {
     visual_note_mode?: string | null;
     prompt_preset_id?: string | null;
     summary_scope?: string | null;
+    schedule?: TaskSchedule | null;
   }) {
     return fetchJson<VideoCollectionTaskCreateResponse>(`/api/v1/videos/collections/${encodeURIComponent(collectionId)}/tasks/batch`, {
       method: "POST",
@@ -449,6 +458,7 @@ export const api = {
       page_number?: number | null;
       visual_note_mode?: string | null;
       prompt_preset_id?: string | null;
+      schedule?: TaskSchedule | null;
     },
   ) {
     return fetchJson<TaskDetail>(`/api/v1/videos/${videoId}/tasks`, {
@@ -469,6 +479,11 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+    });
+  },
+  runTaskNow(taskId: string) {
+    return fetchJson<TaskDetail>(`/api/v1/tasks/${encodeURIComponent(taskId)}/run-now`, {
+      method: "POST",
     });
   },
   resummarizeVideoTasksBatch(videoId: string, payload: VideoTaskBatchRequest) {
@@ -839,6 +854,67 @@ export const api = {
   },
   rebuildKnowledgeIndex() {
     return fetchJson<{ indexed_videos: number }>("/api/v1/knowledge/rebuild-index", {
+      method: "POST",
+    });
+  },
+  getUpDynamicsStatus() {
+    return fetchJson<UpDynamicsStatus>("/api/v1/dynamics/status");
+  },
+  listUpSubscriptions() {
+    return fetchJson<UpSubscription[]>("/api/v1/dynamics/subscriptions");
+  },
+  createUpSubscription(query: string) {
+    return fetchJson<UpSubscription>("/api/v1/dynamics/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+  },
+  updateUpSubscription(subscriptionId: string, patch: { enabled?: boolean }) {
+    return fetchJson<UpSubscription>(`/api/v1/dynamics/subscriptions/${subscriptionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+  },
+  deleteUpSubscription(subscriptionId: string) {
+    return fetchJson<null>(`/api/v1/dynamics/subscriptions/${subscriptionId}`, {
+      method: "DELETE",
+    });
+  },
+  getUpDynamicsFeed(options?: { page?: number; page_size?: number; unread_only?: boolean; subscription_id?: string }) {
+    const url = new URL("/api/v1/dynamics/feed", window.location.origin);
+    if (options?.page) {
+      url.searchParams.set("page", String(options.page));
+    }
+    if (options?.page_size) {
+      url.searchParams.set("page_size", String(options.page_size));
+    }
+    if (options?.unread_only) {
+      url.searchParams.set("unread_only", "true");
+    }
+    if (options?.subscription_id) {
+      url.searchParams.set("subscription_id", options.subscription_id);
+    }
+    return fetchJson<UpDynamicsFeed>(url.toString());
+  },
+  getUpDynamicsUnreadCount() {
+    return fetchJson<{ unread_count: number }>("/api/v1/dynamics/feed/unread-count");
+  },
+  markUpDynamicsRead(body: { detection_ids?: string[]; subscription_id?: string; mark_all?: boolean }) {
+    return fetchJson<{ unread_count: number }>("/api/v1/dynamics/feed/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  refreshUpDynamics() {
+    return fetchJson<{ accepted: boolean }>("/api/v1/dynamics/refresh", {
+      method: "POST",
+    });
+  },
+  summarizeUpDetection(detectionId: string) {
+    return fetchJson<UpDetectedVideo>(`/api/v1/dynamics/feed/${detectionId}/summarize`, {
       method: "POST",
     });
   },

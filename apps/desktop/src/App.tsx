@@ -31,6 +31,7 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { CollectionDetailPage } from "./pages/CollectionDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
+import { generateUuid } from "./utils";
 import type { CollectionGroupMode, CollectionSortMode, VideoAssetSummary, VideoCollection, VideoCollectionItem, VideoPageBatchOption, VideoProbeResult } from "./types";
 
 const PROMPT_PRESET_STORAGE_KEY = "bilisum.promptPresetId";
@@ -773,20 +774,22 @@ export function App() {
   async function handleSummarizeCollectionItems(collectionId: string, videoIds: string[]) {
     if (!videoIds.length) return;
     setSubmitStatus(`正在按指定顺序创建 ${videoIds.length} 个合集摘要任务...`);
-    const taskPayload = await buildCreateTaskPayload(null, "合集视频");
+    const taskPayload = await buildCreateTaskPayload(null, "合集视频", "offpeak");
     const batchKey = JSON.stringify({
       collectionId,
       videoIds,
       visualNoteMode: taskPayload.visual_note_mode,
       promptPresetId: taskPayload.prompt_preset_id,
+      schedule: taskPayload.schedule,
     });
-    const batchId = collectionBatchRetryIdsRef.current.get(batchKey) || crypto.randomUUID();
+    const batchId = collectionBatchRetryIdsRef.current.get(batchKey) || generateUuid();
     collectionBatchRetryIdsRef.current.set(batchKey, batchId);
     const result = await api.createVideoCollectionTasks(collectionId, {
       batch_id: batchId,
       ordered_video_ids: [...videoIds],
       visual_note_mode: taskPayload.visual_note_mode,
       prompt_preset_id: taskPayload.prompt_preset_id,
+      schedule: taskPayload.schedule,
     });
     collectionBatchRetryIdsRef.current.delete(batchKey);
     const createdCount = result.created_tasks.length;
@@ -893,6 +896,17 @@ export function App() {
     }
   }
 
+  function resolveScheduleFromPreference(): "immediate" | "offpeak" {
+    try {
+      const rawValue = window.localStorage.getItem("bilisum.summaryPreference");
+      if (!rawValue) return "immediate";
+      const parsed = JSON.parse(rawValue) as { schedule?: unknown };
+      return parsed.schedule === "offpeak" ? "offpeak" : "immediate";
+    } catch {
+      return "immediate";
+    }
+  }
+
   function resolveManualPromptPresetId(): string | null {
     try {
       const value = window.localStorage.getItem(PROMPT_PRESET_STORAGE_KEY)?.trim();
@@ -919,11 +933,16 @@ export function App() {
     }
   }
 
-  async function buildCreateTaskPayload(pageNumber?: number | null, sourceText?: string | null) {
+  async function buildCreateTaskPayload(
+    pageNumber?: number | null,
+    sourceText?: string | null,
+    scheduleOverride?: "immediate" | "offpeak",
+  ) {
     return {
       page_number: pageNumber ?? null,
       visual_note_mode: resolveVisualNoteModeFromPreference(),
       prompt_preset_id: await resolveTaskPromptPresetId(sourceText),
+      schedule: scheduleOverride ?? resolveScheduleFromPreference(),
     };
   }
 
@@ -956,6 +975,7 @@ export function App() {
     collection: VideoCollection,
     items: VideoCollectionItem[],
     currentVideo?: VideoAssetSummary,
+    schedule: "immediate" | "offpeak" = "offpeak",
   ) {
     if (!items.length) {
       setSubmitStatus("请至少选择一个合集视频");
@@ -963,16 +983,17 @@ export function App() {
     }
     setProbeUrl("");
     setSubmitStatus("已添加合集总结任务");
-    void processCollectionSummary(collection, items, currentVideo);
+    void processCollectionSummary(collection, items, currentVideo, schedule);
   }
 
   async function processCollectionSummary(
     collection: VideoCollection,
     items: VideoCollectionItem[],
     currentVideo?: VideoAssetSummary,
+    schedule: "immediate" | "offpeak" = "offpeak",
   ) {
     try {
-      const taskPayloadPromise = buildCreateTaskPayload(null, collection.title);
+      const taskPayloadPromise = buildCreateTaskPayload(null, collection.title, schedule);
       let collectionOpened = false;
       const openCollection = () => {
         if (collectionOpened) return;
@@ -1080,7 +1101,7 @@ export function App() {
     setSubmitStatus("已取消合集选择");
   }
 
-  function handleChooseCollection(scope: "single" | "collection", items: VideoCollectionItem[] = []) {
+  function handleChooseCollection(scope: "single" | "collection", items: VideoCollectionItem[] = [], schedule?: "immediate" | "offpeak") {
     if (!collectionProbeVideo || !collectionProbe) {
       handleCloseCollectionDialog();
       return;
@@ -1097,7 +1118,7 @@ export function App() {
       startSingleVideoSummary(currentVideo, currentVideo.source_url, wasCached);
       return;
     }
-    startCollectionSummary(currentCollection, items, currentVideo);
+    startCollectionSummary(currentCollection, items, currentVideo, schedule ?? "offpeak");
   }
 
   async function createLocalPathTasks(filePaths: string[]) {
@@ -1221,7 +1242,7 @@ export function App() {
     }
   }
 
-  async function handleConfirmMultiPage(input: { pageNumbers: number[]; confirm: boolean }) {
+  async function handleConfirmMultiPage(input: { pageNumbers: number[]; confirm: boolean; schedule?: "immediate" | "offpeak" }) {
     if (!multiPageProbeVideo) {
       throw new Error("当前视频信息已失效，请重新探测。");
     }
@@ -1237,6 +1258,7 @@ export function App() {
       page_numbers: input.pageNumbers,
       confirm: input.confirm,
       prompt_preset_id: promptPresetId,
+      schedule: input.schedule ?? null,
     });
     if (response.requires_confirmation) {
       setSubmitStatus(`所选内容中有 ${response.conflict_pages.length} 个分 P 已有成功摘要，请确认后继续。`);

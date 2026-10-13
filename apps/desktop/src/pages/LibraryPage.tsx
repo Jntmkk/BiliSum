@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   closestCenter,
@@ -25,9 +25,11 @@ import { Tree, type NodeRendererProps } from "react-arborist";
 
 import type { LibraryFilter, Snapshot } from "../appModel";
 import { platformLabel, taskStatusClass } from "../appModel";
+import { api } from "../api";
 import {
   ArrowRightIcon,
   ArrowUpToLineIcon,
+  BellIcon,
   CornerUpLeftIcon,
   ExternalLinkIcon,
   FolderIcon,
@@ -61,6 +63,7 @@ import {
 } from "../libraryModel";
 import type { VideoAssetDetail, VideoAssetSummary, VideoCollection, VideoFolder } from "../types";
 import { formatDateTime, formatDuration, taskStatusLabel } from "../utils";
+import { UpDynamicsPanel } from "./UpDynamicsPanel";
 
 const COVER_ROWS_PER_PAGE = 5;
 const LIST_VIDEOS_PER_PAGE = 15;
@@ -172,6 +175,10 @@ export function LibraryPage({
   const navigate = useNavigate();
   const [currentPage, setCurrentPage] = useState(1);
   const [activeScope, setActiveScope] = useState<LibraryScope>("all");
+  const [upUnreadCount, setUpUnreadCount] = useState(0);
+  const handleUpUnreadChange = useCallback((count: number) => {
+    setUpUnreadCount(count);
+  }, []);
   const [viewMode, setViewMode] = useState<LibraryViewMode>(() => loadLibraryViewMode());
   const [activeVideoDragId, setActiveVideoDragId] = useState<string | null>(null);
   const [optimisticVideoOrder, setOptimisticVideoOrder] = useState<OptimisticVideoOrder>(null);
@@ -194,6 +201,26 @@ export function LibraryPage({
   const videoMoveBusyRef = useRef(false);
   const coverGridRef = useRef<HTMLDivElement | null>(null);
   const [coverColumnCount, setCoverColumnCount] = useState(3);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const result = await api.getUpDynamicsUnreadCount();
+        if (!cancelled) {
+          setUpUnreadCount(result.unread_count);
+        }
+      } catch {
+        /* 服务未启动时静默 */
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
@@ -297,7 +324,7 @@ export function LibraryPage({
   const activeFilterLabel = filters.find((filter) => filter.id === activeFilter)?.label || "全部";
   const summaryText = latestVideo ? `最近更新：${latestVideo.title}` : "输入链接后，视频会自动进入这里统一管理。";
   const draftParentFolder = folderDraftParentId ? folderMap.get(folderDraftParentId) || null : null;
-  const scopeTitle = activeScope === "all" ? "全部视频" : activeScope === "unfiled" ? "未归档" : activeScope === "favorite" ? "收藏" : activeFolder?.name || "文件夹";
+  const scopeTitle = activeScope === "all" ? "全部视频" : activeScope === "unfiled" ? "未归档" : activeScope === "favorite" ? "收藏" : activeScope === "up_dynamics" ? "UP 动态" : activeFolder?.name || "文件夹";
   const activeDraggedVideo = activeVideoDragId && !activeVideoDragId.startsWith("collection:") ? snapshot.videos.find((video) => video.video_id === activeVideoDragId) || null : null;
   const activeDraggedCollection = activeVideoDragId?.startsWith("collection:")
     ? snapshot.collections.find((collection) => `collection:${collection.collection_id}` === activeVideoDragId) || null
@@ -701,6 +728,7 @@ export function LibraryPage({
               folderId={null}
             />
             <ScopeButton icon={<StarIcon />} active={activeScope === "favorite"} label="收藏" count={libraryCounts.favorite} onClick={() => setActiveScope("favorite")} />
+            <ScopeButton icon={<BellIcon />} active={activeScope === "up_dynamics"} label="UP 动态" count={upUnreadCount} onClick={() => setActiveScope("up_dynamics")} />
             {folderDraftParentId === null ? (
               <FolderDraftInput
                 value={folderDraftName}
@@ -795,6 +823,10 @@ export function LibraryPage({
         </aside>
 
         <section className="library-collection">
+          {activeScope === "up_dynamics" ? (
+            <UpDynamicsPanel active onUnreadChange={handleUpUnreadChange} />
+          ) : (
+          <>
           <div className="library-toolbar">
             <div className="library-toolbar-copy">
               <span className="library-breadcrumb">视频库 / {scopeTitle}</span>
@@ -929,6 +961,8 @@ export function LibraryPage({
                 <p>可以调整筛选条件，或者把视频拖到左侧文件夹完成归档。</p>
               </div>
             </div>
+          )}
+          </>
           )}
         </section>
       </section>

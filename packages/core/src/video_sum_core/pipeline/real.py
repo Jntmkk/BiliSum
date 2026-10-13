@@ -3039,6 +3039,8 @@ class RealPipelineRunner(PipelineRunner):
         # 说明：有意不传 response_format（json_object）
         # 本地 LLM 后端（Ollama/llama.cpp/vLLM 等）不支持该参数，会返回 400
         # 输出格式靠 system prompt 中"只输出合法 JSON"约束
+        # 同样有意不传 temperature：部分模型（如 kimi-for-coding/o 系列）只接受 1，
+        # 预检只是连通性检查，不需要采样参数。
         payload = {
             "model": self._settings.llm_model,
             "messages": [
@@ -3051,8 +3053,10 @@ class RealPipelineRunner(PipelineRunner):
                     "content": '请只返回：{"ok":true}',
                 },
             ],
-            "temperature": 0,
-            "max_tokens": 32,
+            # max_tokens 不能太小：kimi-for-coding 等推理模型会把预算耗在
+            # reasoning_content 上（实测 32 token 预算只余 ~9 token 正文，
+            # finish_reason=length，正文被截断成 `{"`），导致预检误判失败。
+            "max_tokens": 256,
             "enable_thinking": False,
             "chat_template_kwargs": {"enable_thinking": False},
         }
@@ -3918,7 +3922,7 @@ P 数索引：
                 {"role": "system", "content": "你是视频学习笔记的信息架构师。你只输出合法 JSON。"},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.1,
+            "temperature": self._settings.llm_temperature,
             "enable_thinking": False,
         }
         parsed = self._request_llm_json(
@@ -4614,7 +4618,7 @@ P 数索引：
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.5,
+            "temperature": self._settings.llm_temperature,
             "max_tokens": 65536,
             "enable_thinking": True,
         }
@@ -4951,7 +4955,7 @@ P 数索引：
             }
         )
         payload["messages"] = self._ensure_json_keyword_in_messages(messages)
-        payload["temperature"] = 0
+        payload["temperature"] = self._settings.llm_temperature
         return payload
 
     @staticmethod
