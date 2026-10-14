@@ -847,6 +847,21 @@ class RealPipelineRunner(PipelineRunner):
             segments.append({"start": start_value, "end": end_value, "text": text})
         return segments
 
+    def _resolve_cookie_file(self) -> Path | None:
+        cookie_file = str(
+            self._settings.ytdlp_cookies_file
+            or os.environ.get("VIDEO_SUM_YTDLP_COOKIES_FILE")
+            or os.environ.get("YTDLP_COOKIES_FILE")
+            or ""
+        ).strip()
+        if not cookie_file:
+            return None
+        cookie_path = Path(cookie_file).expanduser()
+        if cookie_path.exists() and cookie_path.is_file():
+            return cookie_path
+        logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
+        return None
+
     def _base_ydl_options(self) -> dict[str, object]:
         options: dict[str, object] = {
             "quiet": True,
@@ -858,18 +873,9 @@ class RealPipelineRunner(PipelineRunner):
             "sleep_interval_requests": 1,
             "socket_timeout": 30,
         }
-        cookie_file = str(
-            self._settings.ytdlp_cookies_file
-            or os.environ.get("VIDEO_SUM_YTDLP_COOKIES_FILE")
-            or os.environ.get("YTDLP_COOKIES_FILE")
-            or ""
-        ).strip()
-        if cookie_file:
-            cookie_path = Path(cookie_file).expanduser()
-            if cookie_path.exists() and cookie_path.is_file():
-                options["cookiefile"] = str(cookie_path)
-            else:
-                logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
+        cookie_path = self._resolve_cookie_file()
+        if cookie_path:
+            options["cookiefile"] = str(cookie_path)
         return options
 
     def _raise_ydl_error(self, error: Exception) -> NoReturn:
@@ -885,6 +891,11 @@ class RealPipelineRunner(PipelineRunner):
                 "请通过 BiliSum 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
             ) from error
         if "HTTP Error 412" in message and "BiliBili" in message:
+            if self._resolve_cookie_file():
+                raise VideoSumError(
+                    "B 站返回 HTTP 412，当前请求被风控拦截。已检测到配置的登录凭证，"
+                    "仍被拦截通常与出口 IP 或网络环境有关，请切换网络/IP 或稍后重试。"
+                ) from error
             raise VideoSumError(
                 "B 站返回 HTTP 412，当前请求可能被风控拦截。请稍后重试、切换网络/IP，"
                 "或通过 BiliSum 的 B 站登录窗口捕获登录态；也可以填写 yt-dlp Cookies 文件 "

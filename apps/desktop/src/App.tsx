@@ -850,7 +850,10 @@ export function App() {
     try {
       const currentProbeUrl = probeUrl.trim();
       if (!window.desktop?.bilibili) {
-        setSubmitStatus("当前环境不支持打开 B 站登录窗口，请按教程手动导出 cookies.txt。");
+        // Web / Docker 部署没有桌面端登录窗口，引导到设置页的 B 站扫码登录。
+        setCookieHelpDialogOpen(false);
+        setSubmitStatus("网页端请前往设置页使用「B 站扫码登录」，登录成功后 cookies 会自动保存。");
+        openYtdlpCookieSettings();
         return;
       }
       setSubmitStatus("请在新窗口登录 B 站，登录成功后会自动保存 cookies...");
@@ -1620,6 +1623,7 @@ export function App() {
         onOpenTutorial={openCookieExportTutorial}
         onOpenSettings={openYtdlpCookieSettings}
         onCaptureLoginCookies={captureBilibiliLoginCookies}
+        captureLabel={window.desktop?.bilibili ? "打开 B 站登录窗口" : "前往扫码登录"}
       />
       {homeTourOpen && location.pathname === "/" && !configHealth.hasBlockingIssues ? (
         <HomeTour onClose={() => setHomeTourOpen(false)} />

@@ -81,6 +81,16 @@ export type BilibiliQrcodePollResponse = {
   cookieCount?: number;
 };
 
+export type BilibiliCookieStatusResponse = {
+  configured: boolean;
+  cookieFile: string | null;
+  hasSessdata: boolean;
+  sessdataExpired: boolean | null;
+  onlineValid: boolean | null;
+  account: string | null;
+  message: string;
+};
+
 export class AuthRequiredError extends Error {
   constructor(message = "需要输入 BiliSum 访问密钥。") {
     super(message);
@@ -257,6 +267,9 @@ export const api = {
   },
   pollBilibiliCookieQrcode(qrcodeKey: string) {
     return fetchJson<BilibiliQrcodePollResponse>(`/api/v1/bilibili/cookies/qrcode/${encodeURIComponent(qrcodeKey)}`);
+  },
+  getBilibiliCookieStatus() {
+    return fetchJson<BilibiliCookieStatusResponse>("/api/v1/bilibili/cookies/status");
   },
   getSystemLogs(lines = 200) {
     return fetchJson<SystemLogResponse>(`/api/v1/system/logs?lines=${lines}`);

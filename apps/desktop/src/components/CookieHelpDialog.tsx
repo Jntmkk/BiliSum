@@ -4,6 +4,7 @@ type CookieHelpDialogProps = {
   onOpenTutorial(): void;
   onOpenSettings(): void;
   onCaptureLoginCookies?: () => void | Promise<void>;
+  captureLabel?: string;
 };
 
 export function CookieHelpDialog({
@@ -12,6 +13,7 @@ export function CookieHelpDialog({
   onOpenTutorial,
   onOpenSettings,
   onCaptureLoginCookies,
+  captureLabel = "打开 B 站登录窗口",
 }: CookieHelpDialogProps) {
   if (!isOpen) {
     return null;
@@ -70,7 +72,7 @@ export function CookieHelpDialog({
         </div>
 
         <div className="update-dialog-footer">
-          {onCaptureLoginCookies ? <button className="primary-button" type="button" onClick={onCaptureLoginCookies}>打开 B 站登录窗口</button> : null}
+          {onCaptureLoginCookies ? <button className="primary-button" type="button" onClick={onCaptureLoginCookies}>{captureLabel}</button> : null}
           <button className="secondary-button" type="button" onClick={onOpenTutorial}>打开导出教程</button>
           <button className="secondary-button" type="button" onClick={onOpenSettings}>前往 Cookies 设置</button>
         </div>

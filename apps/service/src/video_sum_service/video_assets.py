@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -16,7 +15,8 @@ from video_sum_core.models.tasks import InputType
 from video_sum_core.utils import extract_bilibili_page, normalize_video_url
 from video_sum_infra.runtime import ffmpeg_location
 
-from video_sum_service.context import COVER_CACHE_DIR, settings_manager
+from video_sum_service.bilibili_cookies import resolve_cookie_file
+from video_sum_service.context import COVER_CACHE_DIR
 from video_sum_service.integrations import cache_cover_image
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import VideoAssetRecord, VideoPageOptionResponse
@@ -115,18 +115,9 @@ def build_ydl_probe_options(*, extract_flat: bool = False) -> dict[str, object]:
         "sleep_interval_requests": 1,
         "socket_timeout": 30,
     }
-    cookie_file = str(
-        settings_manager.current.ytdlp_cookies_file
-        or os.environ.get("VIDEO_SUM_YTDLP_COOKIES_FILE")
-        or os.environ.get("YTDLP_COOKIES_FILE")
-        or ""
-    ).strip()
-    if cookie_file:
-        cookie_path = Path(cookie_file).expanduser()
-        if cookie_path.exists() and cookie_path.is_file():
-            options["cookiefile"] = str(cookie_path)
-        else:
-            logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
+    cookie_path = resolve_cookie_file()
+    if cookie_path:
+        options["cookiefile"] = str(cookie_path)
     if extract_flat:
         options["extract_flat"] = "in_playlist"
     return options
@@ -166,6 +157,15 @@ def extract_video_info(url: str, *, extract_flat: bool = False) -> dict[str, obj
                 ),
             ) from exc
         if "HTTP Error 412" in message and "BiliBili" in message:
+            if resolve_cookie_file():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "B 站返回 HTTP 412，当前请求被风控拦截。"
+                        "已检测到配置的登录凭证，仍被拦截通常与出口 IP 或网络环境有关，"
+                        "请切换网络/IP 或稍后重试。"
+                    ),
+                ) from exc
             raise HTTPException(
                 status_code=400,
                 detail=(

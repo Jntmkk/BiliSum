@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+import os
 import time
 import webbrowser
+from http.cookiejar import LoadError, MozillaCookieJar
 from pathlib import Path
 from typing import Iterable
 
@@ -10,9 +13,12 @@ from yt_dlp.cookies import extract_cookies_from_browser
 
 from video_sum_service.context import settings_manager
 
+logger = logging.getLogger("video_sum_service.bilibili_cookies")
+
 BILIBILI_LOGIN_URL = "https://passport.bilibili.com/login"
 BILIBILI_QRCODE_GENERATE_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
 BILIBILI_QRCODE_POLL_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
+BILIBILI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
 BILIBILI_BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -73,6 +79,27 @@ def _has_login_cookie(cookies: Iterable[object]) -> bool:
 
 def _cookie_export_path() -> Path:
     return Path(settings_manager.current.data_dir) / "cookies" / "bilibili.txt"
+
+
+def resolve_cookie_file() -> Path | None:
+    """Return the configured yt-dlp cookies file path if it exists on disk.
+
+    Mirrors the fallback order used by the pipeline probe/download options:
+    settings first, then the environment variables.
+    """
+    cookie_file = str(
+        settings_manager.current.ytdlp_cookies_file
+        or os.environ.get("VIDEO_SUM_YTDLP_COOKIES_FILE")
+        or os.environ.get("YTDLP_COOKIES_FILE")
+        or ""
+    ).strip()
+    if not cookie_file:
+        return None
+    cookie_path = Path(cookie_file).expanduser()
+    if cookie_path.exists() and cookie_path.is_file():
+        return cookie_path
+    logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
+    return None
 
 
 def _write_bilibili_cookies(cookies: list[object]) -> str:
@@ -199,3 +226,108 @@ def capture_bilibili_cookies_from_browser(
                 + suffix
             )
         time.sleep(max(0.5, poll_interval_seconds))
+
+
+def _cookie_header_value(cookie_jar: MozillaCookieJar) -> str:
+    parts = []
+    for cookie in cookie_jar:
+        name = str(getattr(cookie, "name", "") or "")
+        value = str(getattr(cookie, "value", "") or "")
+        if name and value:
+            parts.append(f"{name}={value}")
+    return "; ".join(parts)
+
+
+def check_bilibili_login_status() -> dict[str, object]:
+    """Report whether the configured Bilibili login cookies are actually usable.
+
+    Checks the cookies file configured via settings / environment and, when a
+    SESSDATA cookie is present, best-effort verifies it against Bilibili's nav
+    API. Used by the frontend to avoid nagging already-logged-in users with
+    the "B 站需要登录态" prompt.
+    """
+    cookie_file = resolve_cookie_file()
+    if cookie_file is None:
+        return {
+            "configured": False,
+            "cookieFile": None,
+            "hasSessdata": False,
+            "sessdataExpired": None,
+            "onlineValid": None,
+            "account": None,
+            "message": "尚未配置 B 站登录凭证。",
+        }
+
+    jar = MozillaCookieJar()
+    parse_failed = False
+    try:
+        jar.load(str(cookie_file), ignore_discard=True, ignore_expires=False)
+    except (OSError, LoadError) as exc:
+        logger.warning("failed to parse cookie file %s: %s", cookie_file, exc)
+        parse_failed = True
+
+    sessdata_cookie = next((cookie for cookie in jar if cookie.name == "SESSDATA"), None)
+    sessdata_expired: bool | None = None
+    if sessdata_cookie is None and not parse_failed:
+        # The first load drops expired cookies; retry keeping them so we can
+        # distinguish "no SESSDATA at all" from "SESSDATA present but expired".
+        try:
+            expired_jar = MozillaCookieJar()
+            expired_jar.load(str(cookie_file), ignore_discard=True, ignore_expires=True)
+            expired_cookie = next(
+                (cookie for cookie in expired_jar if cookie.name == "SESSDATA"), None
+            )
+            if expired_cookie is not None:
+                sessdata_cookie = expired_cookie
+                sessdata_expired = True
+        except (OSError, LoadError):
+            pass
+    if sessdata_cookie is not None and sessdata_expired is None:
+        sessdata_expired = bool(sessdata_cookie.expires and sessdata_cookie.expires < time.time())
+
+    online_valid: bool | None = None
+    account: str | None = None
+    online_message = ""
+    if sessdata_cookie is not None and not sessdata_expired and not parse_failed:
+        try:
+            with httpx.Client(timeout=10, follow_redirects=True) as client:
+                response = client.get(
+                    BILIBILI_NAV_URL,
+                    headers={**BILIBILI_BROWSER_HEADERS, "Cookie": _cookie_header_value(jar)},
+                )
+            payload = response.json()
+            code = int(payload.get("code") or 0)
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            if code == 0 and bool(data.get("isLogin")):
+                online_valid = True
+                account = str(data.get("uname") or "").strip() or None
+                online_message = (
+                    f"B 站登录态有效（账号 {account}）。" if account else "B 站登录态有效。"
+                )
+            elif code == 0 or code == -101:
+                online_valid = False
+                online_message = "B 站登录态已失效，请重新登录。"
+            else:
+                online_message = f"B 站在线校验返回状态码 {code}，无法确认登录态是否有效。"
+        except Exception as exc:  # network or response shape issues must not break the endpoint.
+            logger.warning("bilibili online login check failed: %s", exc)
+            online_message = "无法在线校验 B 站登录态。"
+
+    if parse_failed:
+        message = "已配置 cookies 文件，但解析失败，请重新导出 Netscape 格式的 cookies.txt。"
+    elif sessdata_cookie is None:
+        message = "cookies 文件缺少 SESSDATA 登录凭证，请重新导出或重新登录 B 站。"
+    elif sessdata_expired:
+        message = "SESSDATA 已过期，请重新登录 B 站。"
+    else:
+        message = online_message or "已配置 B 站登录凭证，尚未完成在线校验。"
+
+    return {
+        "configured": True,
+        "cookieFile": str(cookie_file),
+        "hasSessdata": sessdata_cookie is not None,
+        "sessdataExpired": sessdata_expired,
+        "onlineValid": online_valid,
+        "account": account,
+        "message": message,
+    }

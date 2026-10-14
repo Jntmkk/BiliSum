@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { progressEventClass, stageLabel, taskStatusClass } from "../appModel";
-import { api } from "../api";
+import { api, type BilibiliCookieStatusResponse } from "../api";
 import { CookieHelpDialog } from "../components/CookieHelpDialog";
 import { MarkdownContent } from "../components/MarkdownContent";
 import { MultiPageSelectDialog } from "../components/MultiPageSelectDialog";
@@ -1220,9 +1220,42 @@ export function VideoDetailPage({ refreshToken = 0, onRefresh, onOpenCookieSetti
     return describeTaskContentState(selectedTaskDetail);
   }, [isSelectedTaskLoading, selectedTaskDetail, selectedTaskLoadError]);
   const cookieHelpNeeded = Boolean(contentState?.detail && isBilibiliCookieHelpError(contentState.detail));
+  const [bilibiliCookieStatus, setBilibiliCookieStatus] = useState<BilibiliCookieStatusResponse | null>(null);
+  const [bilibiliCookieStatusState, setBilibiliCookieStatusState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+
+  useEffect(() => {
+    if (!cookieHelpNeeded) {
+      return;
+    }
+    let cancelled = false;
+    setBilibiliCookieStatusState("loading");
+    api.getBilibiliCookieStatus()
+      .then((result) => {
+        if (!cancelled) {
+          setBilibiliCookieStatus(result);
+          setBilibiliCookieStatusState("ready");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBilibiliCookieStatusState("error");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cookieHelpNeeded]);
 
   useEffect(() => {
     if (!selectedTaskId || !contentState?.detail || !isBilibiliCookieHelpError(contentState.detail)) {
+      return;
+    }
+    // Wait for the cookie configuration check so users who already configured
+    // B 站登录态 (issue #20: 已登录仍提示需要登录态) don't get nagged.
+    if (bilibiliCookieStatusState === "idle" || bilibiliCookieStatusState === "loading") {
+      return;
+    }
+    if (bilibiliCookieStatusState === "ready" && bilibiliCookieStatus?.configured) {
       return;
     }
     const helpKey = `${selectedTaskId}:${contentState.detail}`;
@@ -1231,7 +1264,7 @@ export function VideoDetailPage({ refreshToken = 0, onRefresh, onOpenCookieSetti
     }
     cookieHelpAutoShownRef.current = helpKey;
     setCookieHelpDialogOpen(true);
-  }, [contentState?.detail, selectedTaskId]);
+  }, [contentState?.detail, selectedTaskId, bilibiliCookieStatusState, bilibiliCookieStatus?.configured]);
 
   function openCookieExportTutorial() {
     onOpenCookieTutorial?.();
@@ -1258,6 +1291,14 @@ export function VideoDetailPage({ refreshToken = 0, onRefresh, onOpenCookieSetti
       await onCaptureLoginCookies();
       setCookieHelpDialogOpen(false);
       setStatus("B 站登录态已保存。重新提交任务即可。");
+      api.getBilibiliCookieStatus()
+        .then((result) => {
+          setBilibiliCookieStatus(result);
+          setBilibiliCookieStatusState("ready");
+        })
+        .catch(() => {
+          setBilibiliCookieStatusState("error");
+        });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "捕获 B 站登录态失败，请按教程手动导出 cookies.txt。");
     }
@@ -1816,6 +1857,7 @@ export function VideoDetailPage({ refreshToken = 0, onRefresh, onOpenCookieSetti
         onOpenTutorial={openCookieExportTutorial}
         onOpenSettings={openYtdlpCookieSettings}
         onCaptureLoginCookies={captureLoginCookies}
+        captureLabel={window.desktop?.bilibili ? "打开 B 站登录窗口" : "前往扫码登录"}
       />
 
       {/* 分 P 跳转确认悬浮窗 */}

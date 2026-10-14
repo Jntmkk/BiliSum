@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
 
@@ -8,6 +9,15 @@ import pytest
 import video_sum_service.bilibili_cookies as bilibili_cookies
 from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import settings_manager
+
+
+def write_netscape_cookie_file(path: Path, *, sessdata: str | None, expires: int | None) -> None:
+    lines = ["# Netscape HTTP Cookie File"]
+    if sessdata is not None:
+        expire_text = "0" if expires is None else str(expires)
+        lines.append(f".bilibili.com\tTRUE\t/\tTRUE\t{expire_text}\tSESSDATA\t{sessdata}")
+    lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def make_cookie(name: str, value: str, domain: str = ".bilibili.com") -> Cookie:
@@ -172,3 +182,96 @@ def test_poll_bilibili_login_qrcode_writes_confirmed_cookies(monkeypatch, tmp_pa
     assert result["status"] == "confirmed"
     assert result["cookieCount"] == 1
     assert "SESSDATA\tsession-value" in cookies_file.read_text(encoding="utf-8")
+
+
+def _configure_service_settings(
+    monkeypatch, tmp_path: Path, cookies_file: str | None = None
+) -> None:
+    settings_manager._settings = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        ytdlp_cookies_file=cookies_file or "",
+    )
+    monkeypatch.delenv("VIDEO_SUM_YTDLP_COOKIES_FILE", raising=False)
+    monkeypatch.delenv("YTDLP_COOKIES_FILE", raising=False)
+
+
+def test_check_bilibili_login_status_without_cookie_file(monkeypatch, tmp_path: Path) -> None:
+    _configure_service_settings(monkeypatch, tmp_path)
+
+    result = bilibili_cookies.check_bilibili_login_status()
+
+    assert result["configured"] is False
+    assert result["cookieFile"] is None
+    assert result["hasSessdata"] is False
+    assert result["onlineValid"] is None
+    assert "尚未配置" in str(result["message"])
+
+
+def test_check_bilibili_login_status_with_valid_sessdata(monkeypatch, tmp_path: Path) -> None:
+    cookies_file = tmp_path / "cookies.txt"
+    write_netscape_cookie_file(
+        cookies_file, sessdata="session-value", expires=int(time.time()) + 3600
+    )
+    _configure_service_settings(monkeypatch, tmp_path, cookies_file=str(cookies_file))
+
+    class FakeResponse:
+        def json(self) -> dict[str, object]:
+            return {"code": 0, "data": {"isLogin": True, "uname": "测试用户"}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, **kwargs) -> FakeResponse:
+            assert url == bilibili_cookies.BILIBILI_NAV_URL
+            assert "SESSDATA=session-value" in kwargs["headers"]["Cookie"]
+            return FakeResponse()
+
+    monkeypatch.setattr(bilibili_cookies.httpx, "Client", FakeClient)
+
+    result = bilibili_cookies.check_bilibili_login_status()
+
+    assert result["configured"] is True
+    assert result["hasSessdata"] is True
+    assert result["sessdataExpired"] is False
+    assert result["onlineValid"] is True
+    assert result["account"] == "测试用户"
+    assert "登录态有效" in str(result["message"])
+
+
+def test_check_bilibili_login_status_with_expired_sessdata(monkeypatch, tmp_path: Path) -> None:
+    cookies_file = tmp_path / "cookies.txt"
+    write_netscape_cookie_file(
+        cookies_file, sessdata="expired-value", expires=int(time.time()) - 3600
+    )
+    _configure_service_settings(monkeypatch, tmp_path, cookies_file=str(cookies_file))
+
+    result = bilibili_cookies.check_bilibili_login_status()
+
+    assert result["configured"] is True
+    assert result["hasSessdata"] is True
+    assert result["sessdataExpired"] is True
+    assert result["onlineValid"] is None
+    assert "已过期" in str(result["message"])
+
+
+def test_check_bilibili_login_status_without_sessdata(monkeypatch, tmp_path: Path) -> None:
+    cookies_file = tmp_path / "cookies.txt"
+    write_netscape_cookie_file(cookies_file, sessdata=None, expires=None)
+    _configure_service_settings(monkeypatch, tmp_path, cookies_file=str(cookies_file))
+
+    result = bilibili_cookies.check_bilibili_login_status()
+
+    assert result["configured"] is True
+    assert result["hasSessdata"] is False
+    assert result["onlineValid"] is None
+    assert "缺少 SESSDATA" in str(result["message"])

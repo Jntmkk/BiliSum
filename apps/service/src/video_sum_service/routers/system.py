@@ -30,6 +30,7 @@ from video_sum_service.auth import (
 )
 from video_sum_service.bilibili_cookies import (
     capture_bilibili_cookies_from_browser,
+    check_bilibili_login_status,
     create_bilibili_login_qrcode,
     poll_bilibili_login_qrcode,
 )
@@ -445,6 +446,11 @@ def post_bilibili_cookies_capture() -> dict[str, object]:
         return capture_bilibili_cookies_from_browser()
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/bilibili/cookies/status")
+def get_bilibili_cookies_status() -> dict[str, object]:
+    return check_bilibili_login_status()
 
 
 @router.post("/bilibili/cookies/qrcode")
