@@ -1401,6 +1401,7 @@ export function App() {
         updateState={updateState}
         configHealth={configHealth}
         worker={snapshot.systemInfo?.worker}
+        bilibiliAccount={snapshot.systemInfo?.bilibiliAccount}
         onOpenSettings={openConfigAssist}
         onOpenUpdateDialog={openUpdateDialog}
         onSubmitFeedback={handleSubmitFeedback}

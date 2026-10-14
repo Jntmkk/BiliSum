@@ -34,6 +34,7 @@ from video_sum_service.bilibili_cookies import (
     create_bilibili_login_qrcode,
     poll_bilibili_login_qrcode,
 )
+from video_sum_service.bilibili_wbi import describe_bilibili_account
 from video_sum_service.context import access_token_manager, app_info, logger, settings_manager
 from video_sum_service import feedback as feedback_channel
 from video_sum_service.integrations import (
@@ -296,6 +297,7 @@ def system_info(request: Request, runtime_channel: str | None = None, refresh: b
             "threads": [thread.name for thread in threading.enumerate()[:80]],
         },
         "worker": worker_snapshot,
+        "bilibiliAccount": describe_bilibili_account(),
         "taskModel": {"statuses": [status.value for status in TaskStatus]},
         "environment": environment,
     }
@@ -503,6 +505,12 @@ def get_bilibili_cookies_qrcode(qrcode_key: str) -> dict[str, object]:
         return poll_bilibili_login_qrcode(qrcode_key)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/bilibili/account")
+def get_bilibili_account(refresh: bool = False) -> dict[str, object]:
+    """当前 B 站登录账号（昵称/头像），供顶栏展示；refresh=1 绕过缓存重查。"""
+    return describe_bilibili_account(force=refresh)
 
 
 @router.get("/environment")

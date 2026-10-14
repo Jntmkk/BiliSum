@@ -1,5 +1,24 @@
 import type { TaskEvent, TaskStatus } from "./types";
 
+const BILIBILI_IMAGE_HOST_PATTERN = /(^|\.)((hdslb|bilivideo|biliimg|acgvideo)\.com)$/i;
+
+/** B 站图片（头像/封面）带防盗链，必须经服务端代理取回；其他域名原样返回。 */
+export function proxiedImageUrl(url: string): string {
+  if (!url) {
+    return url;
+  }
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return url;
+  }
+  if (!BILIBILI_IMAGE_HOST_PATTERN.test(host)) {
+    return url;
+  }
+  return `/api/v1/dynamics/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
 /** 生成 UUID v4。crypto.randomUUID 只在安全上下文（HTTPS/localhost）可用，
  * 纯 IP HTTP 访问（如局域网测试）下会缺失，此时退回 getRandomValues 实现。 */
 export function generateUuid(): string {

@@ -2,7 +2,8 @@ import { type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEv
 
 import type { ConfigHealth, UpdateState } from "../appModel";
 import type { FeedbackCategory } from "../api";
-import type { WorkerQueueItem, WorkerQueueSnapshot, WorkerSnapshot } from "../types";
+import type { BilibiliAccount, WorkerQueueItem, WorkerQueueSnapshot, WorkerSnapshot } from "../types";
+import { proxiedImageUrl } from "../utils";
 
 const FEEDBACK_CATEGORY_OPTIONS: Array<{ value: FeedbackCategory; label: string }> = [
   { value: "bug", label: "问题反馈" },
@@ -16,6 +17,15 @@ function feedbackIcon() {
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M2.5 3.75C2.5 3.06 3.06 2.5 3.75 2.5h8.5c.69 0 1.25.56 1.25 1.25v6.5c0 .69-.56 1.25-1.25 1.25H6l-2.6 2.21c-.4.34-1.02.05-1.02-.47V3.75Z" />
       <path d="M5.25 5.5h5.5M5.25 8h3.5" />
+    </svg>
+  );
+}
+
+function accountIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="5.5" r="2.75" />
+      <path d="M2.75 13.25c.6-2.5 2.7-4 5.25-4s4.65 1.5 5.25 4" />
     </svg>
   );
 }
@@ -132,6 +142,7 @@ export function TitleBar({
   updateState,
   configHealth,
   worker,
+  bilibiliAccount,
   onOpenSettings,
   onOpenUpdateDialog,
   onSubmitFeedback,
@@ -147,6 +158,7 @@ export function TitleBar({
   updateState: UpdateState;
   configHealth: ConfigHealth;
   worker?: WorkerSnapshot | null;
+  bilibiliAccount?: BilibiliAccount | null;
   onOpenSettings(issueKey?: string): void;
   onOpenUpdateDialog(): void;
   onSubmitFeedback(input: { category: FeedbackCategory; description: string }): Promise<{ issueUrl: string }>;
@@ -157,6 +169,8 @@ export function TitleBar({
   const [queuePage, setQueuePage] = useState<0 | 1>(0);
   const [completionDisplay, setCompletionDisplay] = useState<{ completed: number; total: number } | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [accountPopoverOpen, setAccountPopoverOpen] = useState(false);
+  const [accountFaceFailed, setAccountFaceFailed] = useState(false);
   const [feedbackCategory, setFeedbackCategory] = useState<FeedbackCategory>("bug");
   const [feedbackDescription, setFeedbackDescription] = useState("");
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
@@ -165,9 +179,17 @@ export function TitleBar({
   const statusPopoverRef = useRef<HTMLDivElement | null>(null);
   const queuePopoverRef = useRef<HTMLDivElement | null>(null);
   const feedbackPopoverRef = useRef<HTMLDivElement | null>(null);
+  const accountPopoverRef = useRef<HTMLDivElement | null>(null);
   const completionTimerRef = useRef<number | null>(null);
   const queueWasActiveRef = useRef(false);
   const queueView = useMemo(() => queueSnapshot(worker), [worker]);
+  const accountLoggedIn = Boolean(bilibiliAccount?.loggedIn);
+  const accountName = (bilibiliAccount?.name || "").trim();
+  const accountFaceUrl = accountLoggedIn && bilibiliAccount?.face ? proxiedImageUrl(bilibiliAccount.face) : "";
+  const accountStatusText = accountLoggedIn
+    ? "B 站登录态有效。"
+    : bilibiliAccount?.message || "尚未配置 B 站登录态。";
+  const accountLabel = accountLoggedIn ? accountName || `UID ${bilibiliAccount?.mid || "未知"}` : "未登录";
   const isDesktopWindowControlsAvailable = Boolean(window.desktop?.window);
   const isMacOS = window.desktop?.window?.platform === "darwin";
 
@@ -192,6 +214,9 @@ export function TitleBar({
       }
       if (!feedbackPopoverRef.current?.contains(target)) {
         setFeedbackOpen(false);
+      }
+      if (!accountPopoverRef.current?.contains(target)) {
+        setAccountPopoverOpen(false);
       }
     }
 
@@ -229,6 +254,10 @@ export function TitleBar({
     }
   }, []);
 
+  useEffect(() => {
+    setAccountFaceFailed(false);
+  }, [accountFaceUrl]);
+
   function handleStatusPopoverKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Escape") {
       return;
@@ -236,6 +265,7 @@ export function TitleBar({
     setStatusPopoverOpen(false);
     setQueuePopoverOpen(false);
     setFeedbackOpen(false);
+    setAccountPopoverOpen(false);
   }
 
   const handleMaximize = async () => {
@@ -329,18 +359,28 @@ export function TitleBar({
 
   function toggleQueuePopover() {
     setStatusPopoverOpen(false);
+    setAccountPopoverOpen(false);
     setQueuePopoverOpen((current) => !current);
   }
 
   function toggleStatusPopover() {
     setQueuePopoverOpen(false);
     setFeedbackOpen(false);
+    setAccountPopoverOpen(false);
     setStatusPopoverOpen((current) => !current);
+  }
+
+  function toggleAccountPopover() {
+    setStatusPopoverOpen(false);
+    setQueuePopoverOpen(false);
+    setFeedbackOpen(false);
+    setAccountPopoverOpen((current) => !current);
   }
 
   function toggleFeedbackPopover() {
     setStatusPopoverOpen(false);
     setQueuePopoverOpen(false);
+    setAccountPopoverOpen(false);
     setFeedbackOpen((current) => {
       if (current) {
         return false;
@@ -568,6 +608,71 @@ export function TitleBar({
                 </button>
               </div>
             ) : null}
+          </div>
+        </div>
+        <div
+          className={`title-bar-account-wrap ${accountPopoverOpen ? "is-open" : ""}`}
+          ref={accountPopoverRef}
+          onKeyDown={handleStatusPopoverKeyDown}
+        >
+          <button
+            className={`title-bar-account-pill ${accountLoggedIn ? "" : "is-offline"}`}
+            type="button"
+            onClick={toggleAccountPopover}
+            aria-label="B 站账号"
+            aria-expanded={accountPopoverOpen}
+            aria-haspopup="dialog"
+            title={accountLoggedIn ? `${accountLabel} · UID ${bilibiliAccount?.mid || "未知"}` : accountStatusText}
+          >
+            {accountFaceUrl && !accountFaceFailed ? (
+              <img
+                className="title-bar-account-face"
+                src={accountFaceUrl}
+                alt=""
+                loading="lazy"
+                onError={() => setAccountFaceFailed(true)}
+              />
+            ) : (
+              <span className="title-bar-account-face is-placeholder" aria-hidden="true">
+                {accountLoggedIn && accountName ? accountName.slice(0, 1) : accountIcon()}
+              </span>
+            )}
+            <span className="title-bar-account-name">{accountLabel}</span>
+          </button>
+          <div
+            className={`title-bar-account-popover ${accountPopoverOpen ? "is-visible" : ""}`}
+            role="dialog"
+            aria-label="B 站账号详情"
+          >
+            <div className="title-bar-account-head">
+              {accountFaceUrl && !accountFaceFailed ? (
+                <img
+                  className="title-bar-account-face is-large"
+                  src={accountFaceUrl}
+                  alt=""
+                  onError={() => setAccountFaceFailed(true)}
+                />
+              ) : (
+                <span className="title-bar-account-face is-large is-placeholder" aria-hidden="true">
+                  {accountLoggedIn && accountName ? accountName.slice(0, 1) : accountIcon()}
+                </span>
+              )}
+              <div className="title-bar-account-copy">
+                <strong>{accountLoggedIn ? accountName || "未知账号" : "未登录 B 站"}</strong>
+                <small>{accountLoggedIn ? `UID ${bilibiliAccount?.mid || "未知"}` : "登录后可减少风控与限流"}</small>
+              </div>
+            </div>
+            <p className="title-bar-account-note">{accountStatusText}</p>
+            <button
+              className="secondary-button title-bar-account-action"
+              type="button"
+              onClick={() => {
+                setAccountPopoverOpen(false);
+                onOpenSettings("ytdlp_cookies_file");
+              }}
+            >
+              {accountLoggedIn ? "更换 B 站账号" : "前往登录"}
+            </button>
           </div>
         </div>
         <div

@@ -12,6 +12,7 @@ import json
 import logging
 import random
 import re
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -19,11 +20,8 @@ from pathlib import Path
 
 import httpx
 
-from video_sum_service.bilibili_cookie_store import (
-    canonical_cookie_file,
-    materialize_bilibili_cookie_file,
-)
 from video_sum_service.bilibili_cookies import BILIBILI_BROWSER_HEADERS
+from video_sum_service.context import settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +47,12 @@ _WBI_VALUE_FILTER = str.maketrans("", "", "!'()*")
 _WBI_KEY_TTL_SECONDS = 12 * 60 * 60
 _SPACE_URL_RE = re.compile(r"space\.bilibili\.com/(\d+)")
 _DM_RAND = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+# 顶栏账号信息（头像/昵称）的缓存时长。前端每秒级轮询 system 接口，nav 接口
+# 没必要跟着打；换 cookie 时缓存 key 自然失效，所以登录后无需手动清除。
+_ACCOUNT_CACHE_TTL_SECONDS = 5 * 60.0
+_account_lock = threading.Lock()
+_account_cache: tuple[str, float, dict[str, object]] | None = None
 
 
 class UpDynamicsError(Exception):
@@ -95,12 +99,12 @@ class UpVideoItem:
 
 
 def bilibili_cookie_file() -> Path:
-    return canonical_cookie_file()
+    return Path(settings_manager.current.data_dir) / "cookies" / "bilibili.txt"
 
 
 def load_bilibili_cookie_header() -> str | None:
     """从 Netscape cookie 文件拼出 Cookie 头；必须含 SESSDATA 才算有效。"""
-    cookie_path = materialize_bilibili_cookie_file(bilibili_cookie_file())
+    cookie_path = bilibili_cookie_file()
     if not cookie_path.exists():
         return None
     try:
@@ -125,6 +129,75 @@ def load_bilibili_cookie_header() -> str | None:
     except OSError as exc:
         logger.warning("failed to read bilibili cookie file: %s", exc)
         return None
+
+
+def _fetch_bilibili_account(cookie_header: str) -> dict[str, object]:
+    """调 nav 接口取当前登录账号的昵称/头像。"""
+    try:
+        with httpx.Client(timeout=10, follow_redirects=True, headers=BILIBILI_BROWSER_HEADERS) as client:
+            response = client.get(BILIBILI_NAV_URL, headers={"Cookie": cookie_header})
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("failed to load bilibili account info: %s", exc)
+        return {
+            "loggedIn": False,
+            "mid": 0,
+            "name": "",
+            "face": "",
+            "message": "B 站账号信息获取失败。",
+        }
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict) or not data.get("isLogin"):
+        return {
+            "loggedIn": False,
+            "mid": 0,
+            "name": "",
+            "face": "",
+            "message": "B 站登录态已失效，请重新登录。",
+        }
+    face = str(data.get("face") or "")
+    if face.startswith("//"):
+        face = "https:" + face
+    return {
+        "loggedIn": True,
+        "mid": int(data.get("mid") or 0),
+        "name": str(data.get("uname") or ""),
+        "face": face,
+        "message": "",
+    }
+
+
+def describe_bilibili_account(*, force: bool = False) -> dict[str, object]:
+    """当前登录账号信息，供前端顶栏展示。
+
+    未登录、登录态失效或接口异常都返回 ``loggedIn=False`` 而不抛异常：顶栏只是
+    展示位，不该因为 B 站抖动而让整个 system 请求失败。
+    """
+    global _account_cache
+    cookie_header = load_bilibili_cookie_header()
+    if not cookie_header:
+        return {
+            "loggedIn": False,
+            "mid": 0,
+            "name": "",
+            "face": "",
+            "message": "尚未配置 B 站登录态。",
+        }
+    now = time.monotonic()
+    with _account_lock:
+        cached = _account_cache
+        if (
+            not force
+            and cached is not None
+            and cached[0] == cookie_header
+            and (now - cached[1]) < _ACCOUNT_CACHE_TTL_SECONDS
+        ):
+            return dict(cached[2])
+    result = _fetch_bilibili_account(cookie_header)
+    with _account_lock:
+        _account_cache = (cookie_header, now, result)
+    return dict(result)
 
 
 def _derive_mixin_key(img_key: str, sub_key: str) -> str:
