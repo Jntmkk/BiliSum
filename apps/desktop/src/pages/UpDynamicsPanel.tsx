@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { ExternalLinkIcon, RefreshIcon, TrashIcon } from "../components/AppIcons";
 import type { UpDetectedVideo, UpDynamicsStatus, UpSubscription } from "../types";
-import { formatDuration } from "../utils";
+import { formatDuration, proxiedImageUrl } from "../utils";
 
 const FEED_PAGE_SIZE = 20;
 const FEED_REFRESH_INTERVAL_MS = 60_000;
@@ -36,24 +36,6 @@ function taskBadgeClass(taskStatus: string | null): string {
   if (taskStatus === "completed") return "is-completed";
   if (taskStatus === "failed" || taskStatus === "cancelled") return "is-failed";
   return "is-running";
-}
-
-const BILIBILI_IMAGE_HOST_PATTERN = /(^|\.)((hdslb|bilivideo|biliimg|acgvideo)\.com)$/i;
-
-function proxiedImageUrl(url: string): string {
-  if (!url) {
-    return url;
-  }
-  let host = "";
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return url;
-  }
-  if (!BILIBILI_IMAGE_HOST_PATTERN.test(host)) {
-    return url;
-  }
-  return `/api/v1/dynamics/image-proxy?url=${encodeURIComponent(url)}`;
 }
 
 type UpDynamicsPanelProps = {

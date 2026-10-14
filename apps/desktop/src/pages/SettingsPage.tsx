@@ -829,6 +829,7 @@ export function SettingsPage({
             setBilibiliQrcodeKey("");
             setBilibiliQrcodeImage("");
             onSettingsSaved(response.settings, environment);
+            onRefresh();
           }
         } catch (error) {
           if (!cancelled) {
@@ -1888,6 +1889,7 @@ export function SettingsPage({
       const browserSuffix = captured.browser ? `（${captured.browser}）` : "";
       setBilibiliCookieStatus(`B 站登录态已保存${browserSuffix}，捕获 ${captured.cookieCount} 条 cookies。`);
       onSettingsSaved(response.settings, environment);
+      onRefresh();
     } catch (error) {
       setBilibiliCookieStatus(error instanceof Error ? error.message : "捕获 B 站登录态失败，请按教程手动导出 cookies.txt。");
     } finally {

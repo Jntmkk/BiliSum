@@ -663,6 +663,15 @@ export type SystemInfo = {
   environment?: EnvironmentInfo;
   runtimeStartup?: RuntimeStartupInfo;
   worker?: WorkerSnapshot | null;
+  bilibiliAccount?: BilibiliAccount;
+};
+
+export type BilibiliAccount = {
+  loggedIn: boolean;
+  mid: number;
+  name: string;
+  face: string;
+  message: string;
 };
 
 export type WorkerQueueSnapshot = {
