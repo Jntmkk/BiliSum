@@ -184,6 +184,16 @@ export function UpDynamicsPanel({ active, onUnreadChange }: UpDynamicsPanelProps
     }
   };
 
+  /** 打开本站视频页。检测到投稿时会一并入库，所以 video_id 正常都有；
+   * 万一缺失（历史数据），退回 B 站外链而不是点了没反应。 */
+  const openDetection = (detection: UpDetectedVideo) => {
+    if (detection.video_id) {
+      navigate(`/videos/${detection.video_id}`);
+      return;
+    }
+    window.open(`https://www.bilibili.com/video/${detection.bvid}/`, "_blank", "noreferrer");
+  };
+
   const markOneRead = async (detection: UpDetectedVideo) => {
     try {
       const result = await api.markUpDynamicsRead({ detection_ids: [detection.detection_id] });
@@ -412,28 +422,36 @@ export function UpDynamicsPanel({ active, onUnreadChange }: UpDynamicsPanelProps
               const busy = busyDetectionId === detection.detection_id;
               return (
                 <li key={detection.detection_id} className={`up-dynamics-item ${detection.unread ? "is-unread" : ""}`}>
-                  <a
+                  {/* 封面与标题跳本站视频页；外链箭头才是去 B 站，两条路径都保留。 */}
+                  <button
                     className="up-dynamics-item-cover"
-                    href={`https://www.bilibili.com/video/${detection.bvid}/`}
-                    target="_blank"
-                    rel="noreferrer"
-                    title="在 B 站打开"
+                    type="button"
+                    onClick={() => openDetection(detection)}
+                    title="查看本站摘要"
                   >
                     {detection.cover_url ? <img src={proxiedImageUrl(detection.cover_url)} alt="" loading="lazy" /> : null}
                     {detection.duration ? <span className="up-dynamics-item-duration">{formatDuration(detection.duration)}</span> : null}
-                  </a>
+                  </button>
                   <div className="up-dynamics-item-body">
                     <div className="up-dynamics-item-title-row">
                       {detection.unread ? <span className="up-dynamics-item-dot" aria-label="未读" /> : null}
-                      <a
+                      <button
                         className="up-dynamics-item-title"
+                        type="button"
+                        onClick={() => openDetection(detection)}
+                      >
+                        {detection.title || detection.bvid}
+                      </button>
+                      <a
+                        className="up-dynamics-item-link"
                         href={`https://www.bilibili.com/video/${detection.bvid}/`}
                         target="_blank"
                         rel="noreferrer"
+                        title="在 B 站打开"
+                        aria-label="在 B 站打开"
                       >
-                        {detection.title || detection.bvid}
+                        <ExternalLinkIcon width={13} height={13} />
                       </a>
-                      <ExternalLinkIcon width={13} height={13} />
                     </div>
                     <div className="up-dynamics-item-meta">
                       <span>{subscription?.up_name || "未知 UP"}</span>
