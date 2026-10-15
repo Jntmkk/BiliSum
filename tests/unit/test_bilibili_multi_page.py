@@ -701,3 +701,55 @@ def test_fetch_bilibili_collection_payload_series_wrap_detection_stops_scan(monk
 
     assert collection is None
     assert calls == [1, 2]
+
+
+def test_with_trailing_slash_appends_before_query() -> None:
+    """尾斜杠必须落在 query 之前，否则拼出 /video/BV1x/?p=2 之外的错 URL。"""
+    fix = service_app.video_assets._with_trailing_slash
+
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/"
+    )
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD?p=2") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/?p=2"
+    )
+    # 已有斜杠时不重复添加；带斜杠的 query 形式保持原样。
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD/") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/"
+    )
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD/?p=2") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/?p=2"
+    )
+    # 无路径的 host-only URL 不应变成 https://www.bilibili.com/。
+    assert fix("https://www.bilibili.com") == "https://www.bilibili.com"
+
+
+def test_initial_state_payload_requests_url_with_trailing_slash(monkeypatch) -> None:
+    """B 站 WAF 对无尾斜杠 /video/BVxxx 的重定向链返回 412。
+
+    normalize 产物不含斜杠，因此补齐必须发生在发请求之前——分P 目录
+    (fetch_bilibili_page_catalog_payload) 曾因漏补而稳定拿到 0 个分P。
+    """
+    import httpx
+
+    seen: list[str] = []
+
+    class _FakeResponse:
+        status_code = 200
+        text = '__INITIAL_STATE__ = {"videoData": {"pages": [{"page": 1}]}}; (function(){})()'
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs: object) -> _FakeResponse:
+        seen.append(url)
+        return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(service_app.video_assets, "load_bilibili_cookie_header", lambda: None)
+
+    service_app.video_assets.fetch_bilibili_page_catalog_payload(
+        "https://www.bilibili.com/video/BV1xx411c7mD"
+    )
+
+    assert seen == ["https://www.bilibili.com/video/BV1xx411c7mD/"]
