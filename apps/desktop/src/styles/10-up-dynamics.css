@@ -239,9 +239,12 @@
   flex-shrink: 0;
   width: 128px;
   aspect-ratio: 16 / 9;
+  padding: 0;
+  border: none;
   border-radius: 8px;
   overflow: hidden;
   background: var(--bg-soft);
+  cursor: pointer;
 }
 
 .up-dynamics-item-cover img {
@@ -289,14 +292,32 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--text-primary);
+  font-family: inherit;
   font-size: 14px;
+  text-align: left;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .up-dynamics-item-title:hover {
   color: var(--brand-700);
   text-decoration: underline;
+}
+
+.up-dynamics-item-link {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.up-dynamics-item-link:hover {
+  color: var(--brand-700);
 }
 
 .up-dynamics-item-meta {
