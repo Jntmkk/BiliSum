@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 BILIBILI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
 BILIBILI_SPACE_ACC_INFO_URL = "https://api.bilibili.com/x/space/wbi/acc/info"
 BILIBILI_SPACE_ARC_SEARCH_URL = "https://api.bilibili.com/x/space/wbi/arc/search"
+# 匿名下发 buvid3/buvid4 设备指纹，无需登录态。
+BILIBILI_FINGER_SPI_URL = "https://api.bilibili.com/x/frontend/finger/spi"
 
 # mixin 置换表（64 项，顺序不可更改；取自公开参考实现）。
 MIXIN_KEY_ENC_TAB = [
@@ -103,7 +105,7 @@ def bilibili_cookie_file() -> Path:
 
 
 def load_bilibili_cookie_header() -> str | None:
-    """从 Netscape cookie 文件拼出 Cookie 头；必须含 SESSDATA 才算有效。"""
+    """从 Netscape cookie 文件拼出 Cookie 头（含设备指纹）；必须含 SESSDATA 才算有效。"""
     cookie_path = bilibili_cookie_file()
     if not cookie_path.exists():
         return None
@@ -125,14 +127,82 @@ def load_bilibili_cookie_header() -> str | None:
             parts.append(f"{name}={value}")
         if not has_sessdata:
             return None
-        return "; ".join(parts) if parts else None
+        return cookie_header_with_fingerprint("; ".join(parts)) if parts else None
     except OSError as exc:
         logger.warning("failed to read bilibili cookie file: %s", exc)
         return None
 
 
+_FINGERPRINT_TTL_SECONDS = 12 * 60 * 60
+_fingerprint_lock = threading.Lock()
+_fingerprint_cache: tuple[float, dict[str, str]] | None = None
+
+
+def _fetch_device_fingerprint() -> dict[str, str]:
+    """匿名领取 buvid3/buvid4 设备指纹。
+
+    2022-08-24 起 B 站 Web 接口要求携带 ``buvid3``，缺失会触发 -412；扫码登录
+    导出的 cookie 里通常只有 buvid3 且未必带上，buvid4 更是没有。文档要求
+    **持久化**（不要每次请求新生成），所以这里按进程缓存而非逐次请求。
+    """
+    with httpx.Client(timeout=10, follow_redirects=True, headers=BILIBILI_BROWSER_HEADERS) as client:
+        response = client.get(BILIBILI_FINGER_SPI_URL)
+        response.raise_for_status()
+        payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        raise UpstreamError("B 站指纹接口响应格式无效")
+    fingerprint = {
+        key: str(data.get(source) or "").strip()
+        for key, source in (("buvid3", "b_3"), ("buvid4", "b_4"))
+    }
+    if not fingerprint["buvid3"]:
+        raise UpstreamError("B 站指纹接口未返回 buvid3")
+    return {key: value for key, value in fingerprint.items() if value}
+
+
+def _device_fingerprint_cookies() -> dict[str, str]:
+    """取设备指纹 cookie（带进程级缓存）；失败时返回空字典而不是抛错。"""
+    global _fingerprint_cache
+    now = time.monotonic()
+    with _fingerprint_lock:
+        cached = _fingerprint_cache
+        if cached is not None and (now - cached[0]) < _FINGERPRINT_TTL_SECONDS:
+            return dict(cached[1])
+    try:
+        fingerprint = _fetch_device_fingerprint()
+    except (httpx.HTTPError, ValueError, UpstreamError) as exc:
+        logger.warning("failed to obtain bilibili device fingerprint: %s", exc)
+        return {}
+    with _fingerprint_lock:
+        _fingerprint_cache = (now, fingerprint)
+    return dict(fingerprint)
+
+
+def cookie_header_with_fingerprint(cookie_header: str) -> str:
+    """补齐 cookie 头里缺失的 buvid3/buvid4，已有的一律保留（文档要求持久沿用）。"""
+    present = {
+        part.split("=", 1)[0].strip()
+        for part in cookie_header.split(";")
+        if "=" in part
+    }
+    additions = [
+        f"{name}={value}"
+        for name, value in _device_fingerprint_cookies().items()
+        if name not in present
+    ]
+    if not additions:
+        return cookie_header
+    return "; ".join([cookie_header, *additions]) if cookie_header else "; ".join(additions)
+
+
+def reset_fingerprint_cache_for_tests() -> None:
+    global _fingerprint_cache
+    with _fingerprint_lock:
+        _fingerprint_cache = None
+
+
 def _fetch_bilibili_account(cookie_header: str) -> dict[str, object]:
-    """调 nav 接口取当前登录账号的昵称/头像。"""
     try:
         with httpx.Client(timeout=10, follow_redirects=True, headers=BILIBILI_BROWSER_HEADERS) as client:
             response = client.get(BILIBILI_NAV_URL, headers={"Cookie": cookie_header})
@@ -206,6 +276,16 @@ def _derive_mixin_key(img_key: str, sub_key: str) -> str:
     return mixed[:32]
 
 
+def _encode_params(params: dict[str, object]) -> str:
+    """按 WBI 约定编码查询串。
+
+    ``urllib.parse.urlencode`` 默认用 ``+`` 编码空格，而 B 站校验要求 ``%20``；
+    签名与实际发送必须走同一个函数，否则算出的 ``w_rid`` 与实际请求对不上。
+    十六进制字母 urlencode 默认大写，符合要求。
+    """
+    return urllib.parse.urlencode(sorted(params.items()), quote_via=urllib.parse.quote)
+
+
 def _sign_params(params: dict[str, object], mixin_key: str) -> dict[str, object]:
     signed = {key: value for key, value in params.items() if key != "w_rid"}
     signed["wts"] = int(time.time())
@@ -214,7 +294,7 @@ def _sign_params(params: dict[str, object], mixin_key: str) -> dict[str, object]
         key: str(value).translate(_WBI_VALUE_FILTER)
         for key, value in signed.items()
     }
-    query = urllib.parse.urlencode(sorted(filtered.items()))
+    query = _encode_params(filtered)
     signed["w_rid"] = hashlib.md5((query + mixin_key).encode("utf-8")).hexdigest()
     return signed
 
@@ -289,12 +369,20 @@ def _signed_get(
     retry_on_risk_control: bool = True,
 ) -> dict[str, object]:
     """发起 WBI 签名 GET 请求并解析业务 code；必要时刷新 key 重试一次。"""
+    # 设备指纹对所有 B 站 Web 接口都是硬要求，统一在这里补齐，签名与实际
+    # 发送的 Cookie 才是同一份。
+    cookie_header = cookie_header_with_fingerprint(cookie_header)
     with httpx.Client(timeout=30, follow_redirects=True, headers=BILIBILI_BROWSER_HEADERS) as client:
         attempt = 0
         while True:
             signed = _signer.sign(client, cookie_header, params)
             try:
-                response = client.get(url, params=signed, headers={"Cookie": cookie_header})
+                # 用 _encode_params 自己拼 query 而不是交给 httpx 的 params=：
+                # httpx 会按自己的规则重新编码，和签名时的串不一致就必然 -352。
+                response = client.get(
+                    f"{url}?{_encode_params(signed)}",
+                    headers={"Cookie": cookie_header},
+                )
             except httpx.HTTPError as exc:
                 raise UpstreamError(f"B 站接口请求失败：{exc}") from exc
             try:
