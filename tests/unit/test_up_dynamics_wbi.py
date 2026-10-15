@@ -11,8 +11,14 @@ from video_sum_service import bilibili_wbi as wbi
 def _fresh_signer_cache():
     """模块级签名器带内存缓存，测试间必须清空，否则 nav 请求被缓存跳过。"""
     wbi._signer.invalidate()
+    wbi.reset_fingerprint_cache_for_tests()
     yield
     wbi._signer.invalidate()
+    wbi.reset_fingerprint_cache_for_tests()
+
+
+def _fingerprint_response() -> MagicMock:
+    return MagicMock(status_code=200, json=lambda: {"code": 0, "data": {"b_3": "buvid3-value", "b_4": "buvid4-value"}})
 
 
 def test_mixin_table_has_64_entries():
@@ -67,22 +73,61 @@ def test_signed_get_success():
     with patch.object(wbi.httpx, "Client") as client_cls:
         fake_client = MagicMock()
         client_cls.return_value.__enter__.return_value = fake_client
-        fake_client.get.side_effect = [
-            _nav_response("a" * 32, "b" * 32),
-            MagicMock(status_code=200, json=lambda: {"code": 0, "data": {"list": {}}}),
-        ]
+
+        def fake_get(url, params=None, headers=None):
+            if "finger/spi" in url:
+                return _fingerprint_response()
+            if "nav" in url:
+                return _nav_response("a" * 32, "b" * 32)
+            return MagicMock(status_code=200, json=lambda: {"code": 0, "data": {"list": {}}})
+
+        fake_client.get.side_effect = fake_get
         result = wbi._signed_get(wbi.BILIBILI_SPACE_ARC_SEARCH_URL, {"mid": "1"}, "cookie")
     assert result == {"list": {}}
 
 
+def test_signed_get_sends_wbi_signed_query_and_fingerprint():
+    """签名串与实际发送的 query 必须完全一致，且 Cookie 里带上 buvid3。"""
+    seen: list[tuple[str, str]] = []
+
+    with patch.object(wbi.httpx, "Client") as client_cls:
+        fake_client = MagicMock()
+        client_cls.return_value.__enter__.return_value = fake_client
+
+        def fake_get(url, params=None, headers=None):
+            if "finger/spi" in url:
+                return _fingerprint_response()
+            if "nav" in url:
+                return _nav_response("a" * 32, "b" * 32)
+            seen.append((url, (headers or {}).get("Cookie", "")))
+            return MagicMock(status_code=200, json=lambda: {"code": 0, "data": {}})
+
+        fake_client.get.side_effect = fake_get
+        wbi._signed_get(wbi.BILIBILI_SPACE_ARC_SEARCH_URL, {"mid": "1", "keyword": "a b"}, "SESSDATA=x")
+
+    assert len(seen) == 1
+    url, cookie = seen[0]
+    assert "w_rid=" in url and "wts=" in url
+    # 空格必须编成 %20（WBI 约定），不能是 urllib 默认的 +
+    assert "a%20b" in url
+    assert "a+b" not in url
+    assert "buvid3=buvid3-value" in cookie
+    assert "buvid4=buvid4-value" in cookie
+    assert "SESSDATA=x" in cookie
+
+
 def test_signed_get_refreshes_keys_on_risk_control():
-    calls = []
+    nav_calls = []
+    arc_calls = []
 
     def fake_get(url, params=None, headers=None):
-        calls.append(url)
+        if "finger/spi" in url:
+            return _fingerprint_response()
         if "nav" in url:
+            nav_calls.append(url)
             return _nav_response("c" * 32, "d" * 32)
-        if len(calls) == 2:
+        arc_calls.append(url)
+        if len(arc_calls) == 1:
             return MagicMock(status_code=200, json=lambda: {"code": -352, "message": "风控"})
         return MagicMock(status_code=200, json=lambda: {"code": 0, "data": {}})
 
@@ -93,12 +138,15 @@ def test_signed_get_refreshes_keys_on_risk_control():
         wbi._signer.invalidate()
         result = wbi._signed_get(wbi.BILIBILI_SPACE_ARC_SEARCH_URL, {"mid": "1"}, "cookie")
     assert result == {}
-    # nav + 第一次 -352 + 刷新 key 重新取 nav + 重试成功
-    assert len(calls) == 4
+    assert len(arc_calls) == 2, "首次 -352 后应重试一次"
+    # -352 后刷新 key 需重新取 nav
+    assert len(nav_calls) == 2
 
 
 def test_signed_get_raises_after_retry_exhausts():
     def fake_get(url, params=None, headers=None):
+        if "finger/spi" in url:
+            return _fingerprint_response()
         if "nav" in url:
             return _nav_response("c" * 32, "d" * 32)
         return MagicMock(status_code=200, json=lambda: {"code": -352, "message": "风控"})

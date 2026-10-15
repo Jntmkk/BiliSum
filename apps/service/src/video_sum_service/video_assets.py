@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse, urlunparse
 
 from fastapi import HTTPException
 
@@ -416,6 +416,19 @@ def _fetch_bilibili_series_collection_payload(
     }
 
 
+def _with_trailing_slash(url: str) -> str:
+    """给 B 站视频页 URL 补尾斜杠（斜杠必须落在 query 之前）。
+
+    B 站 WAF 对无尾斜杠的 ``/video/BVxxx`` 的**重定向链**一律返回 412，
+    带尾斜杠才正常；带 cookie 也救不回来，而 ``normalize_video_url`` 的
+    产物不含斜杠。所以补齐必须发生在发起请求之前、且对每个调用方都生效。
+    """
+    parsed = urlparse(url)
+    if not parsed.path or parsed.path.endswith("/"):
+        return url
+    return urlunparse(parsed._replace(path=f"{parsed.path}/"))
+
+
 def _fetch_bilibili_initial_state_payload(url: str) -> dict[str, object]:
     import httpx
 
@@ -426,6 +439,10 @@ def _fetch_bilibili_initial_state_payload(url: str) -> dict[str, object]:
     cookie_header = load_bilibili_cookie_header()
     if cookie_header:
         headers["Cookie"] = cookie_header
+
+    # 补斜杠在这里统一做，避免某个调用方漏掉后拿到一个必然 412 的 URL
+    # （重试 5 次也只是白等 30s）。
+    url = _with_trailing_slash(url)
 
     response: httpx.Response | None = None
     for attempt in range(5):
@@ -496,13 +513,8 @@ def fetch_bilibili_collection_payload(url: str) -> dict[str, object] | None:
     if normalized.platform != "bilibili":
         return None
 
-    # B 站 WAF 对无尾斜杠的 /video/BVxxx 重定向链一律返回 412，
-    # 带尾斜杠则正常——normalize 产物不含斜杠，这里补回。
-    page_url = normalized.normalized_url
-    if not page_url.endswith("/"):
-        page_url = f"{page_url}/"
-
-    payload = _fetch_bilibili_initial_state_payload(page_url)
+    # 尾斜杠由 _fetch_bilibili_initial_state_payload 统一补齐。
+    payload = _fetch_bilibili_initial_state_payload(normalized.normalized_url)
     video_data = payload.get("videoData") or {}
     if not isinstance(video_data, dict):
         return None

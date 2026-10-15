@@ -133,21 +133,37 @@ def test_describe_account_swallows_network_errors(tmp_path: Path):
 
 def test_describe_account_caches_per_cookie(tmp_path: Path):
     _write_cookie_file(tmp_path)
+    nav_calls: list[str] = []
     client = MagicMock()
-    client.return_value.__enter__.return_value.get.return_value = _nav_response()
+
+    def fake_get(url, **kwargs):
+        if wbi.BILIBILI_FINGER_SPI_URL in url:
+            return _spi_response()
+        nav_calls.append(url)
+        return _nav_response()
+
+    client.return_value.__enter__.return_value.get.side_effect = fake_get
 
     with _patch_data_dir(tmp_path), patch.object(httpx, "Client", client):
         wbi.describe_bilibili_account()
         wbi.describe_bilibili_account()
         wbi.describe_bilibili_account(force=True)
 
-    assert client.return_value.__enter__.return_value.get.call_count == 2
+    assert len(nav_calls) == 2
 
 
 def test_describe_account_cache_invalidated_on_cookie_change(tmp_path: Path):
     _write_cookie_file(tmp_path)
+    nav_calls: list[str] = []
     client = MagicMock()
-    client.return_value.__enter__.return_value.get.return_value = _nav_response()
+
+    def fake_get(url, **kwargs):
+        if wbi.BILIBILI_FINGER_SPI_URL in url:
+            return _spi_response()
+        nav_calls.append(url)
+        return _nav_response()
+
+    client.return_value.__enter__.return_value.get.side_effect = fake_get
 
     with _patch_data_dir(tmp_path), patch.object(httpx, "Client", client):
         wbi.describe_bilibili_account()
@@ -157,4 +173,82 @@ def test_describe_account_cache_invalidated_on_cookie_change(tmp_path: Path):
         )
         wbi.describe_bilibili_account()
 
-    assert client.return_value.__enter__.return_value.get.call_count == 2
+    assert len(nav_calls) == 2
+
+
+def _spi_response(b3: str = "bv3-value", b4: str = "bv4-value") -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"code": 0, "data": {"b_3": b3, "b_4": b4}},
+        request=httpx.Request("GET", wbi.BILIBILI_FINGER_SPI_URL),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clear_fingerprint_cache():
+    wbi.reset_fingerprint_cache_for_tests()
+    yield
+    wbi.reset_fingerprint_cache_for_tests()
+
+
+def test_cookie_header_with_fingerprint_appends_missing_buvids():
+    client = MagicMock()
+    client.return_value.__enter__.return_value.get.return_value = _spi_response()
+
+    with patch.object(httpx, "Client", client):
+        header = wbi.cookie_header_with_fingerprint("SESSDATA=s; DedeUserID=1")
+
+    assert "SESSDATA=s" in header
+    assert "DedeUserID=1" in header
+    assert "buvid3=bv3-value" in header
+    assert "buvid4=bv4-value" in header
+
+
+def test_cookie_header_with_fingerprint_keeps_existing_buvid3():
+    """文档要求持久化既有 buvid3，不能被新领的值覆盖。"""
+    client = MagicMock()
+    client.return_value.__enter__.return_value.get.return_value = _spi_response()
+
+    with patch.object(httpx, "Client", client):
+        header = wbi.cookie_header_with_fingerprint("SESSDATA=s; buvid3=already-there")
+
+    assert "buvid3=already-there" in header
+    assert "buvid3=bv3-value" not in header
+    # buvid4 原本缺失，仍应补上
+    assert "buvid4=bv4-value" in header
+
+
+def test_fingerprint_is_cached_across_calls():
+    client = MagicMock()
+    client.return_value.__enter__.return_value.get.return_value = _spi_response()
+
+    with patch.object(httpx, "Client", client):
+        wbi.cookie_header_with_fingerprint("SESSDATA=s")
+        wbi.cookie_header_with_fingerprint("SESSDATA=s")
+        wbi.cookie_header_with_fingerprint("SESSDATA=s")
+
+    assert client.return_value.__enter__.return_value.get.call_count == 1
+
+
+def test_fingerprint_failure_leaves_header_unchanged():
+    """指纹接口挂了不应中断请求，只是少两个 cookie。"""
+    client = MagicMock()
+    client.return_value.__enter__.return_value.get.side_effect = httpx.ConnectError("boom")
+
+    with patch.object(httpx, "Client", client):
+        header = wbi.cookie_header_with_fingerprint("SESSDATA=s")
+
+    assert header == "SESSDATA=s"
+
+
+def test_load_cookie_header_includes_fingerprint(tmp_path: Path):
+    _write_cookie_file(tmp_path)
+    client = MagicMock()
+    client.return_value.__enter__.return_value.get.return_value = _spi_response()
+
+    with _patch_data_dir(tmp_path), patch.object(httpx, "Client", client):
+        header = wbi.load_bilibili_cookie_header()
+
+    assert header is not None
+    assert "SESSDATA=sess-value-1" in header
+    assert "buvid3=" in header
