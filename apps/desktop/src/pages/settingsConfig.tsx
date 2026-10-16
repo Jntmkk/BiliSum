@@ -28,7 +28,7 @@ export const settingsCategories: Array<{
   { id: "transcription", label: "语音转文字", description: "选择云端或本地 ASR，配置模型和设备。", group: "workflow", icon: <CpuIcon /> },
   { id: "generation", label: "摘要生成", description: "AI 摘要、模型接入、语言和导图开关。", group: "workflow", icon: <RobotIcon /> },
   { id: "knowledge", label: "知识库与问答", description: "知识库开关、索引策略、问答模型和依赖。", group: "workflow", icon: <StorageIcon /> },
-  { id: "files", label: "输出与文件", description: "输出目录、数据目录和空间清理。", group: "workflow", icon: <FolderIcon /> },
+  { id: "files", label: "输出与文件", description: "输出目录、数据目录、空间清理和 OSS 图床。", group: "workflow", icon: <FolderIcon /> },
   { id: "performance", label: "性能与资源", description: "并发、CUDA 版本和运行环境通道。", group: "system", icon: <SlidersIcon /> },
   { id: "prompts", label: "提示词", description: "知识笔记、摘要和导图的高级文本模板。", group: "system", icon: <FileTextIcon /> },
   { id: "runtime", label: "运行环境", description: "检查并维护 Python、Torch、CUDA、ASR 与扩展依赖。", group: "system", icon: <MonitorIcon /> },

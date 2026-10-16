@@ -14,7 +14,7 @@ import {
   type Snapshot,
   type UpdateState,
 } from "./appModel";
-import { AuthRequiredError, api } from "./api";
+import { AuthRequiredError, api, type FeedbackCategory } from "./api";
 import { getFloatingPlayerDockState, subscribeFloatingPlayerDock } from "./floatingPlayerDock";
 import { HomeIcon, KnowledgeIcon, LibraryIcon, PlayIcon, SettingsIcon } from "./components/AppIcons";
 import { CollectionSelectDialog } from "./components/CollectionSelectDialog";
@@ -31,6 +31,8 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { CollectionDetailPage } from "./pages/CollectionDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
+import { generateUuid } from "./utils";
+import { toCollectionSummary } from "./types";
 import type { CollectionGroupMode, CollectionSortMode, VideoAssetSummary, VideoCollection, VideoCollectionItem, VideoPageBatchOption, VideoProbeResult } from "./types";
 
 const PROMPT_PRESET_STORAGE_KEY = "bilisum.promptPresetId";
@@ -389,6 +391,61 @@ export function App() {
     setUpdateDialogOpen(true);
   }
 
+  const feedbackRouteInfo = useMemo(() => {
+    const path = location.pathname;
+    if (path.startsWith("/videos/")) {
+      return { navItem: "视频库", routePattern: "/videos/:videoId", routeParam: path.split("/")[2] || "" };
+    }
+    if (path.startsWith("/collections/")) {
+      return { navItem: "视频库", routePattern: "/collections/:collectionId", routeParam: path.split("/")[2] || "" };
+    }
+    if (path.startsWith("/library")) {
+      return { navItem: "视频库", routePattern: "/library", routeParam: "" };
+    }
+    if (path.startsWith("/knowledge")) {
+      return { navItem: "知识库", routePattern: "/knowledge", routeParam: "" };
+    }
+    if (path.startsWith("/settings")) {
+      return { navItem: "设置", routePattern: "/settings", routeParam: "" };
+    }
+    return { navItem: "首页", routePattern: "/", routeParam: "" };
+  }, [location.pathname]);
+
+  const feedbackClientType = useMemo(() => {
+    const platform = window.desktop?.window?.platform;
+    if (platform) {
+      const platformLabels: Record<string, string> = {
+        darwin: "macOS",
+        win32: "Windows",
+        linux: "Linux",
+      };
+      return `App (${platformLabels[platform] ?? platform})`;
+    }
+    return snapshot.systemInfo?.deployment === "docker" ? "Docker" : "Web";
+  }, [snapshot.systemInfo?.deployment]);
+
+  async function handleSubmitFeedback(input: { category: FeedbackCategory; description: string }) {
+    return api.submitFeedback({
+      category: input.category,
+      description: input.description,
+      context: {
+        clientType: feedbackClientType,
+        version: runtimeVersionLabel,
+        route: location.pathname,
+        routePattern: feedbackRouteInfo.routePattern,
+        routeParam: feedbackRouteInfo.routeParam,
+        navItem: feedbackRouteInfo.navItem,
+        pageTitle: pageMeta.title,
+        theme: darkMode ? "dark" : "light",
+        serviceOnline: snapshot.serviceOnline,
+        runtimeStatus: runtimeStatusText,
+        serviceVersion: snapshot.systemInfo?.application?.version ?? "",
+        screen: `${window.innerWidth}x${window.innerHeight}`,
+        userAgent: navigator.userAgent,
+      },
+    });
+  }
+
   function closeUpdateDialog() {
     setUpdateDialogOpen(false);
   }
@@ -690,11 +747,12 @@ export function App() {
   }
 
   function mergeCollection(collection: VideoCollection) {
+    const summary = toCollectionSummary(collection);
     setSnapshot((current) => ({
       ...current,
-      collections: current.collections.some((item) => item.collection_id === collection.collection_id)
-        ? current.collections.map((item) => item.collection_id === collection.collection_id ? collection : item)
-        : [collection, ...current.collections],
+      collections: current.collections.some((item) => item.collection_id === summary.collection_id)
+        ? current.collections.map((item) => item.collection_id === summary.collection_id ? summary : item)
+        : [summary, ...current.collections],
     }));
   }
 
@@ -758,35 +816,28 @@ export function App() {
   async function handlePromoteCollectionItem(collectionId: string, videoId: string) {
     const updated = await api.promoteVideoCollectionItem(collectionId, videoId);
     mergeVideos([updated]);
-    setSnapshot((current) => ({
-      ...current,
-      collections: current.collections.map((collection) => collection.collection_id !== collectionId
-        ? collection
-        : {
-          ...collection,
-          items: collection.items.map((item) => item.video_id === videoId ? { ...item, is_global_visible: true } : item),
-        }),
-    }));
     return updated;
   }
 
   async function handleSummarizeCollectionItems(collectionId: string, videoIds: string[]) {
     if (!videoIds.length) return;
     setSubmitStatus(`正在按指定顺序创建 ${videoIds.length} 个合集摘要任务...`);
-    const taskPayload = await buildCreateTaskPayload(null, "合集视频");
+    const taskPayload = await buildCreateTaskPayload(null, "合集视频", "offpeak");
     const batchKey = JSON.stringify({
       collectionId,
       videoIds,
       visualNoteMode: taskPayload.visual_note_mode,
       promptPresetId: taskPayload.prompt_preset_id,
+      schedule: taskPayload.schedule,
     });
-    const batchId = collectionBatchRetryIdsRef.current.get(batchKey) || crypto.randomUUID();
+    const batchId = collectionBatchRetryIdsRef.current.get(batchKey) || generateUuid();
     collectionBatchRetryIdsRef.current.set(batchKey, batchId);
     const result = await api.createVideoCollectionTasks(collectionId, {
       batch_id: batchId,
       ordered_video_ids: [...videoIds],
       visual_note_mode: taskPayload.visual_note_mode,
       prompt_preset_id: taskPayload.prompt_preset_id,
+      schedule: taskPayload.schedule,
     });
     collectionBatchRetryIdsRef.current.delete(batchKey);
     const createdCount = result.created_tasks.length;
@@ -893,6 +944,17 @@ export function App() {
     }
   }
 
+  function resolveScheduleFromPreference(): "immediate" | "offpeak" {
+    try {
+      const rawValue = window.localStorage.getItem("bilisum.summaryPreference");
+      if (!rawValue) return "immediate";
+      const parsed = JSON.parse(rawValue) as { schedule?: unknown };
+      return parsed.schedule === "offpeak" ? "offpeak" : "immediate";
+    } catch {
+      return "immediate";
+    }
+  }
+
   function resolveManualPromptPresetId(): string | null {
     try {
       const value = window.localStorage.getItem(PROMPT_PRESET_STORAGE_KEY)?.trim();
@@ -919,11 +981,16 @@ export function App() {
     }
   }
 
-  async function buildCreateTaskPayload(pageNumber?: number | null, sourceText?: string | null) {
+  async function buildCreateTaskPayload(
+    pageNumber?: number | null,
+    sourceText?: string | null,
+    scheduleOverride?: "immediate" | "offpeak",
+  ) {
     return {
       page_number: pageNumber ?? null,
       visual_note_mode: resolveVisualNoteModeFromPreference(),
       prompt_preset_id: await resolveTaskPromptPresetId(sourceText),
+      schedule: scheduleOverride ?? resolveScheduleFromPreference(),
     };
   }
 
@@ -956,6 +1023,7 @@ export function App() {
     collection: VideoCollection,
     items: VideoCollectionItem[],
     currentVideo?: VideoAssetSummary,
+    schedule: "immediate" | "offpeak" = "offpeak",
   ) {
     if (!items.length) {
       setSubmitStatus("请至少选择一个合集视频");
@@ -963,16 +1031,17 @@ export function App() {
     }
     setProbeUrl("");
     setSubmitStatus("已添加合集总结任务");
-    void processCollectionSummary(collection, items, currentVideo);
+    void processCollectionSummary(collection, items, currentVideo, schedule);
   }
 
   async function processCollectionSummary(
     collection: VideoCollection,
     items: VideoCollectionItem[],
     currentVideo?: VideoAssetSummary,
+    schedule: "immediate" | "offpeak" = "offpeak",
   ) {
     try {
-      const taskPayloadPromise = buildCreateTaskPayload(null, collection.title);
+      const taskPayloadPromise = buildCreateTaskPayload(null, collection.title, schedule);
       let collectionOpened = false;
       const openCollection = () => {
         if (collectionOpened) return;
@@ -1045,9 +1114,10 @@ export function App() {
     try {
       const response = await api.probeVideo({ url: probeUrl.trim(), force_refresh: false });
       setProbePreview(response.video);
-      if (response.collection?.items?.length) {
+      if (response.collection?.item_count) {
+        const fullCollection = await api.getVideoCollection(response.collection.collection_id);
         setCollectionProbeVideo(response.video);
-        setCollectionProbe(response.collection);
+        setCollectionProbe(fullCollection);
         setCollectionProbeCached(response.cached);
         setCollectionDialogOpen(true);
         setSubmitStatus(`检测到合集《${response.collection.title}》，请先选择总结范围`);
@@ -1080,7 +1150,7 @@ export function App() {
     setSubmitStatus("已取消合集选择");
   }
 
-  function handleChooseCollection(scope: "single" | "collection", items: VideoCollectionItem[] = []) {
+  function handleChooseCollection(scope: "single" | "collection", items: VideoCollectionItem[] = [], schedule?: "immediate" | "offpeak") {
     if (!collectionProbeVideo || !collectionProbe) {
       handleCloseCollectionDialog();
       return;
@@ -1097,7 +1167,7 @@ export function App() {
       startSingleVideoSummary(currentVideo, currentVideo.source_url, wasCached);
       return;
     }
-    startCollectionSummary(currentCollection, items, currentVideo);
+    startCollectionSummary(currentCollection, items, currentVideo, schedule ?? "offpeak");
   }
 
   async function createLocalPathTasks(filePaths: string[]) {
@@ -1221,7 +1291,7 @@ export function App() {
     }
   }
 
-  async function handleConfirmMultiPage(input: { pageNumbers: number[]; confirm: boolean }) {
+  async function handleConfirmMultiPage(input: { pageNumbers: number[]; confirm: boolean; schedule?: "immediate" | "offpeak" }) {
     if (!multiPageProbeVideo) {
       throw new Error("当前视频信息已失效，请重新探测。");
     }
@@ -1237,6 +1307,7 @@ export function App() {
       page_numbers: input.pageNumbers,
       confirm: input.confirm,
       prompt_preset_id: promptPresetId,
+      schedule: input.schedule ?? null,
     });
     if (response.requires_confirmation) {
       setSubmitStatus(`所选内容中有 ${response.conflict_pages.length} 个分 P 已有成功摘要，请确认后继续。`);
@@ -1330,8 +1401,10 @@ export function App() {
         updateState={updateState}
         configHealth={configHealth}
         worker={snapshot.systemInfo?.worker}
+        bilibiliAccount={snapshot.systemInfo?.bilibiliAccount}
         onOpenSettings={openConfigAssist}
         onOpenUpdateDialog={openUpdateDialog}
+        onSubmitFeedback={handleSubmitFeedback}
       />
       <aside className="sidebar">
         <nav className="nav">

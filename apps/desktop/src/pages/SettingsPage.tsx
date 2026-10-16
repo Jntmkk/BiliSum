@@ -150,6 +150,7 @@ function maskConfiguredApiKeys(settings: ServiceSettings | null): ServiceSetting
     siliconflow_embedding_api_key: settings.siliconflow_embedding_api_key_configured ? MASKED_API_KEY : settings.siliconflow_embedding_api_key,
     visual_evidence_api_key: settings.visual_evidence_api_key_configured ? MASKED_API_KEY : settings.visual_evidence_api_key,
     twelvelabs_api_key: settings.twelvelabs_api_key_configured ? MASKED_API_KEY : settings.twelvelabs_api_key,
+    oss_access_key_secret: settings.oss_access_key_secret_configured ? MASKED_API_KEY : settings.oss_access_key_secret,
   };
 }
 
@@ -167,6 +168,11 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "files", targetKey: "tasks_dir", title: "任务目录", description: "任务历史和结果文件位置。", keywords: ["task", "tasks", "任务", "历史"] },
   { category: "files", targetKey: "output_dir", title: "输出目录", description: "Markdown / Obsidian 导出目录。", keywords: ["output", "导出", "obsidian", "markdown", "笔记"] },
   { category: "files", targetKey: "storage_cleanup", title: "空间清理", description: "查看占用并清理缓存和孤儿任务。", keywords: ["清理", "空间", "缓存", "孤儿", "storage"] },
+  { category: "files", targetKey: "oss_bucket", title: "阿里云 OSS Bucket", description: "UP 动态图片转存所用的 OSS Bucket。", keywords: ["oss", "bucket", "图床", "阿里云", "封面", "头像"] },
+  { category: "files", targetKey: "oss_endpoint", title: "OSS Endpoint", description: "Bucket 所在地域节点。", keywords: ["oss", "endpoint", "阿里云", "地域"] },
+  { category: "files", targetKey: "oss_access_key_id", title: "OSS AccessKey ID", description: "访问 OSS 的 AccessKey ID。", keywords: ["oss", "accesskey", "ak", "阿里云", "密钥"] },
+  { category: "files", targetKey: "oss_access_key_secret", title: "OSS AccessKey Secret", description: "访问 OSS 的 AccessKey Secret。", keywords: ["oss", "accesskey", "sk", "阿里云", "密钥"] },
+  { category: "files", targetKey: "oss_public_base_url", title: "OSS 公共访问域名", description: "Bucket 公共读或绑定 CDN 时的自定义域名。", keywords: ["oss", "cdn", "域名", "阿里云", "图床"] },
   { category: "transcription", targetKey: "transcription_provider", title: "转写方式", description: "选择云端 ASR 或本地 ASR。", keywords: ["asr", "转写", "语音识别", "whisper", "本地"] },
   { category: "transcription", targetKey: "siliconflow_asr_base_url", title: "SiliconFlow Base URL", description: "云端转写 API 地址。", keywords: ["siliconflow", "base url", "api", "硅基流动"] },
   { category: "transcription", targetKey: "siliconflow_asr_api_key", title: "SiliconFlow API Key", description: "云端转写 API 密钥。", keywords: ["key", "apikey", "api key", "密钥", "硅基流动"] },
@@ -823,6 +829,7 @@ export function SettingsPage({
             setBilibiliQrcodeKey("");
             setBilibiliQrcodeImage("");
             onSettingsSaved(response.settings, environment);
+            onRefresh();
           }
         } catch (error) {
           if (!cancelled) {
@@ -1572,6 +1579,9 @@ export function SettingsPage({
     if (nextForm.twelvelabs_api_key_configured && (!String(nextForm.twelvelabs_api_key || "").trim() || isMaskedApiKey(nextForm.twelvelabs_api_key))) {
       delete payload.twelvelabs_api_key;
     }
+    if (nextForm.oss_access_key_secret_configured && (!String(nextForm.oss_access_key_secret || "").trim() || isMaskedApiKey(nextForm.oss_access_key_secret))) {
+      delete payload.oss_access_key_secret;
+    }
     if (nextForm.siliconflow_embedding_api_key_configured && (!String(nextForm.siliconflow_embedding_api_key || "").trim() || isMaskedApiKey(nextForm.siliconflow_embedding_api_key))) {
       delete payload.siliconflow_embedding_api_key;
     }
@@ -1879,6 +1889,7 @@ export function SettingsPage({
       const browserSuffix = captured.browser ? `（${captured.browser}）` : "";
       setBilibiliCookieStatus(`B 站登录态已保存${browserSuffix}，捕获 ${captured.cookieCount} 条 cookies。`);
       onSettingsSaved(response.settings, environment);
+      onRefresh();
     } catch (error) {
       setBilibiliCookieStatus(error instanceof Error ? error.message : "捕获 B 站登录态失败，请按教程手动导出 cookies.txt。");
     } finally {
@@ -2574,32 +2585,80 @@ export function SettingsPage({
           
 
           {activeCategory === "files" && (
-            <section className="settings-category-section">
+            <section className="settings-category-section generation-settings-section">
               <header className="settings-category-header">
                 <h2>输出与文件</h2>
-                <p>管理导出位置、应用数据目录和本地空间占用。</p>
+                <p>管理导出位置、应用数据目录、本地空间占用和阿里云 OSS 图床。</p>
               </header>
-              <div className="settings-form-group">
-                <label className="settings-input-group" ref={registerFocusTarget("data_dir") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">数据目录</span>
-                  <input className="settings-input-field" value={String(form.data_dir)} onChange={(e) => updateForm({ ...form, data_dir: e.target.value })} />
-                  <span className="settings-input-caption">存储视频摘要和元数据</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("cache_dir") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">缓存目录</span>
-                  <input className="settings-input-field" value={String(form.cache_dir)} onChange={(e) => updateForm({ ...form, cache_dir: e.target.value })} />
-                  <span className="settings-input-caption">临时缓存文件</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("tasks_dir") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">任务目录</span>
-                  <input className="settings-input-field" value={String(form.tasks_dir)} onChange={(e) => updateForm({ ...form, tasks_dir: e.target.value })} />
-                  <span className="settings-input-caption">任务历史记录</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("output_dir") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">输出目录</span>
-                  <input className="settings-input-field" value={String(form.output_dir)} onChange={(e) => updateForm({ ...form, output_dir: e.target.value })} />
-                  <span className="settings-input-caption">手动导出的 Markdown / Obsidian 笔记会写入这里。</span>
-                </label>
+              <div className="generation-settings-tree">
+                <section className="settings-tree-panel">
+                  <header className="settings-tree-panel-header">
+                    <span className="settings-tree-index">01</span>
+                    <div>
+                      <h3>本地目录</h3>
+                      <p>摘要、元数据、缓存和手动导出的落盘位置。</p>
+                    </div>
+                  </header>
+                  <div className="settings-tree-grid">
+                    <label className="settings-input-group" ref={registerFocusTarget("data_dir") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">数据目录</span>
+                      <input className="settings-input-field" value={String(form.data_dir)} onChange={(e) => updateForm({ ...form, data_dir: e.target.value })} />
+                      <span className="settings-input-caption">存储视频摘要和元数据</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("cache_dir") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">缓存目录</span>
+                      <input className="settings-input-field" value={String(form.cache_dir)} onChange={(e) => updateForm({ ...form, cache_dir: e.target.value })} />
+                      <span className="settings-input-caption">临时缓存文件</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("tasks_dir") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">任务目录</span>
+                      <input className="settings-input-field" value={String(form.tasks_dir)} onChange={(e) => updateForm({ ...form, tasks_dir: e.target.value })} />
+                      <span className="settings-input-caption">任务历史记录</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("output_dir") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">输出目录</span>
+                      <input className="settings-input-field" value={String(form.output_dir)} onChange={(e) => updateForm({ ...form, output_dir: e.target.value })} />
+                      <span className="settings-input-caption">手动导出的 Markdown / Obsidian 笔记会写入这里。</span>
+                    </label>
+                  </div>
+                </section>
+
+                <section className="settings-tree-panel">
+                  <header className="settings-tree-panel-header">
+                    <span className="settings-tree-index">02</span>
+                    <div>
+                      <h3>阿里云 OSS</h3>
+                      <p>配置后 UP 动态的头像/封面会自动转存到 OSS 并直接走 OSS 加载，绕开 B 站防盗链。</p>
+                    </div>
+                  </header>
+                  <div className="settings-tree-grid">
+                    <label className="settings-input-group" ref={registerFocusTarget("oss_bucket") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">阿里云 OSS Bucket</span>
+                      <input className="settings-input-field" type="text" value={form.oss_bucket || ""} onChange={(e) => updateForm({ ...form, oss_bucket: e.target.value })} placeholder="如 bilisum-images" />
+                      <span className="settings-input-caption">留空则使用服务端本地缓存。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("oss_endpoint") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">OSS Endpoint</span>
+                      <input className="settings-input-field" type="text" value={form.oss_endpoint || ""} onChange={(e) => updateForm({ ...form, oss_endpoint: e.target.value })} placeholder="如 oss-cn-hangzhou.aliyuncs.com" />
+                      <span className="settings-input-caption">Bucket 所在地域节点，在 OSS 控制台 Bucket 概览页可见。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("oss_access_key_id") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">OSS AccessKey ID</span>
+                      <input className="settings-input-field" type="text" value={form.oss_access_key_id || ""} onChange={(e) => updateForm({ ...form, oss_access_key_id: e.target.value })} placeholder="LTAI..." />
+                      <span className="settings-input-caption">建议使用 RAM 子账号，仅授权该 Bucket 的读写权限。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("oss_access_key_secret") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">OSS AccessKey Secret</span>
+                      <input className="settings-input-field" type="password" value={form.oss_access_key_secret || ""} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, oss_access_key_secret: e.target.value })} autoComplete="new-password" />
+                      <span className="settings-input-caption">{form.oss_access_key_secret_configured ? "已配置，保持 ****** 不变；输入新值可替换。" : "仅保存在服务端，不会回显。"}</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("oss_public_base_url") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">OSS 公共访问域名（可选）</span>
+                      <input className="settings-input-field" type="text" value={form.oss_public_base_url || ""} onChange={(e) => updateForm({ ...form, oss_public_base_url: e.target.value })} placeholder="留空默认 https://{Bucket}.{Endpoint}" />
+                      <span className="settings-input-caption">Bucket 为公共读时留空即可；绑定了 CDN/自定义域名时填写，如 https://img.example.com。</span>
+                    </label>
+                  </div>
+                </section>
               </div>
             </section>
           )}
@@ -2766,6 +2825,79 @@ export function SettingsPage({
                   </select>
                   <span className="settings-input-caption">排查转写问题时可以临时开启；日常关闭能减少磁盘占用。</span>
                 </label>
+                <label className="settings-input-group" ref={registerFocusTarget("up_dynamics_enabled") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">启用 UP 动态监控</span>
+                  <select className="settings-select-field" value={form.up_dynamics_enabled ? "true" : "false"} onChange={(e) => updateForm({ ...form, up_dynamics_enabled: e.target.value === "true" })}>
+                    <option value="false">关闭</option>
+                    <option value="true">开启</option>
+                  </select>
+                  <span className="settings-input-caption">开启后服务端会定期检查已订阅 UP 主的新投稿，自动入库视频并提交总结任务；订阅管理在视频库的「UP 动态」页签。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("up_dynamics_poll_interval_seconds") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">UP 动态轮询间隔（秒）</span>
+                  <input className="settings-input-field" type="number" min={60} max={3600} value={form.up_dynamics_poll_interval_seconds || 600} onChange={(e) => updateForm({ ...form, up_dynamics_poll_interval_seconds: Number(e.target.value) })} />
+                  <span className="settings-input-caption">服务端每隔该时长检查一轮订阅 UP 的新投稿，范围 60-3600 秒，默认 600 秒（10 分钟）。</span>
+                </label>
+
+                <div className="settings-input-group" ref={registerFocusTarget("offpeak_schedule_default") as (node: HTMLDivElement | null) => void}>
+                  <div className="settings-toggle-row">
+                    <div className="settings-toggle-label">
+                      <span className="settings-toggle-title">低峰期调度（自动摄入）</span>
+                      <span className="settings-toggle-caption">开启后，UP 动态监控自动摄入的总结任务标记为「低峰期执行」：转写立即完成，LLM 摘要避开下方配置的高峰时段（DeepSeek 高峰计价、闲时半价，最多等待到下一个闲时段开始）。手动粘贴、批量添加的默认不受此开关影响。</span>
+                    </div>
+                    <label className="toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={form.offpeak_schedule_default || false}
+                        onChange={(e) => updateForm({ ...form, offpeak_schedule_default: e.target.checked })}
+                      />
+                      <span className="toggle-slider" />
+                    </label>
+                  </div>
+                </div>
+                <label className="settings-input-group" ref={registerFocusTarget("offpeak_timezone") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">低峰期时区</span>
+                  <input className="settings-input-field" type="text" value={form.offpeak_timezone || "Asia/Shanghai"} onChange={(e) => updateForm({ ...form, offpeak_timezone: e.target.value })} placeholder="Asia/Shanghai" />
+                  <span className="settings-input-caption">判断高峰时段所用时区，默认为北京时间（Asia/Shanghai）。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("offpeak_peak_windows") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">高峰时段</span>
+                  <input className="settings-input-field" type="text" value={form.offpeak_peak_windows || "09:00-12:00,14:00-18:00"} onChange={(e) => updateForm({ ...form, offpeak_peak_windows: e.target.value })} placeholder="09:00-12:00,14:00-18:00" />
+                  <span className="settings-input-caption">逗号分隔的 HH:MM-HH:MM 时段，如 DeepSeek 默认高峰 09:00-12:00,14:00-18:00；支持跨零点时段（如 22:00-07:00）。</span>
+                </label>
+                <div className="settings-input-group" ref={registerFocusTarget("offpeak_peak_weekdays") as (node: HTMLDivElement | null) => void}>
+                  <span className="settings-input-label">高峰星期</span>
+                  <div className="settings-weekday-row">
+                    {[
+                      ["1", "周一"],
+                      ["2", "周二"],
+                      ["3", "周三"],
+                      ["4", "周四"],
+                      ["5", "周五"],
+                      ["6", "周六"],
+                      ["0", "周日"],
+                    ].map(([value, label]) => (
+                      <label key={value} className="settings-weekday-option">
+                        <input
+                          type="checkbox"
+                          checked={(form.offpeak_peak_weekdays ?? "0,1,2,3,4").split(",").map((item) => item.trim()).includes(value)}
+                          onChange={(event) => {
+                            const current = new Set((form.offpeak_peak_weekdays ?? "0,1,2,3,4").split(",").map((item) => item.trim()).filter(Boolean));
+                            if (event.target.checked) {
+                              current.add(value);
+                            } else {
+                              current.delete(value);
+                            }
+                            const ordered = ["0", "1", "2", "3", "4", "5", "6"].filter((item) => current.has(item));
+                            updateForm({ ...form, offpeak_peak_weekdays: ordered.join(",") });
+                          }}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <span className="settings-input-caption">勾选的星期视为高峰日（DeepSeek 默认周一至周五，周末全天闲时）；全部不勾选表示永不进入高峰。</span>
+                </div>
               </div>
             </section>
           )}

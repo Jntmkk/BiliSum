@@ -50,6 +50,16 @@ VIDEO_SUM_YTDLP_COOKIES_FILE=
 
 > `data_dir` / `cache_dir` / `tasks_dir` / `database_url` 由 `VIDEO_SUM_APP_DATA_ROOT` 推导，也可单独覆盖。
 
+- 当前实现为单连接串行模型（与 SQLite 行为一致）；高并发部署的并发连接池是后续优化项。
+
+### 用户反馈
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `VIDEO_SUM_FEEDBACK_GITHUB_TOKEN` | 空（反馈功能关闭） | GitHub fine-grained PAT，仅需目标仓库 Issues 读写权限；用于在应用内直接提交反馈为 GitHub issue |
+| `VIDEO_SUM_FEEDBACK_REPO` | `Jntmkk/BiliSum` | 反馈 issue 创建的仓库 |
+| `VIDEO_SUM_DEPLOYMENT` | 自动检测（`/.dockerenv`） | 部署形态标记：`docker` / `local`，用于反馈上下文区分 Docker 与 Web |
+
 ### 转写（ASR）
 
 | 变量 | 默认 | 说明 |

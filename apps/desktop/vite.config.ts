@@ -10,6 +10,10 @@ const proxyHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : 
 export default defineConfig(({ command }) => ({
   root,
   base: command === "build" ? "/static/" : "/",
+  // 构建产物写进后端目录，中间的 assets/ 用 hash 命名且每次构建都换名，
+  // 所以需要 emptyOutDir 清掉上一轮。目录里除产物外还有 favicon、js/ 等
+  // 手工维护的文件，把它们放进 publicDir，构建时由 Vite 原样拷回。
+  publicDir: path.resolve(root, "public"),
   plugins: [react()],
   server: {
     host: "127.0.0.1",
@@ -37,7 +41,7 @@ export default defineConfig(({ command }) => ({
   },
   build: {
     outDir: backendStaticRoot,
-    emptyOutDir: false,
+    emptyOutDir: true,
     assetsDir: "assets",
   },
 }));

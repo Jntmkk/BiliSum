@@ -1,4 +1,5 @@
-export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "running" | "waiting_offpeak" | "completed" | "failed" | "cancelled";
+export type TaskSchedule = "immediate" | "offpeak";
 export type PageAggregateStatus = "not_started" | "in_progress" | "completed" | "failed";
 
 export type TimelineItem = {
@@ -120,7 +121,7 @@ export type VideoLibraryState = {
   videos: VideoAssetSummary[];
   folders: VideoFolder[];
   preferences: VideoLibraryPreferences;
-  collections: VideoCollection[];
+  collections: VideoCollectionSummary[];
 };
 
 export type VideoPageOption = {
@@ -192,6 +193,13 @@ export type CollectionSortMode = "source" | "source_desc" | "recent_summary" | "
 
 export type CollectionGroupMode = "none" | "status" | "source_section";
 
+export type VideoCollectionSummary = Omit<VideoCollection, "items" | "new_items">;
+
+export function toCollectionSummary(collection: VideoCollection): VideoCollectionSummary {
+  const { items: _items, new_items: _newItems, ...summary } = collection;
+  return summary;
+}
+
 export type VideoAssetDetail = VideoAssetSummary & {
   latest_result?: TaskResult | null;
   latest_error_message?: string | null;
@@ -202,7 +210,7 @@ export type VideoProbeResult = {
   cached: boolean;
   requires_selection: boolean;
   pages: VideoPageOption[];
-  collection?: VideoCollection | null;
+  collection?: VideoCollectionSummary | null;
 };
 
 export type PromptPreset = {
@@ -230,6 +238,56 @@ export type PromptMatchResult = {
   preset: PromptPreset;
   match_type: "keyword" | "fallback" | string;
   confidence: number;
+};
+
+export type UpSubscription = {
+  subscription_id: string;
+  mid: string;
+  up_name: string;
+  up_face_url: string;
+  enabled: boolean;
+  last_checked_at: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  unread_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type UpDetectedVideo = {
+  detection_id: string;
+  subscription_id: string;
+  bvid: string;
+  aid: number | null;
+  title: string;
+  cover_url: string;
+  duration: number;
+  pubdate: number;
+  description: string;
+  video_id: string | null;
+  task_id: string | null;
+  task_status: string | null;
+  unread: boolean;
+  detection_status: string;
+  created_at: string | null;
+};
+
+export type UpDynamicsFeed = {
+  items: UpDetectedVideo[];
+  total: number;
+  page: number;
+  page_size: number;
+  unread_count: number;
+};
+
+export type UpDynamicsStatus = {
+  enabled: boolean;
+  poll_interval_seconds: number;
+  cookie_ready: boolean;
+  watcher_running: boolean;
+  last_round_at: string | null;
+  last_round_error: string | null;
+  subscription_count: number;
 };
 
 export type TaskSummary = {
@@ -271,6 +329,7 @@ export type VideoTaskBatchRequest = {
   page_numbers: number[];
   confirm?: boolean;
   prompt_preset_id?: string | null;
+  schedule?: TaskSchedule | null;
 };
 
 export type VideoTaskBatchResponse = {
@@ -563,6 +622,18 @@ export type ServiceSettings = {
   summary_chunk_retry_count: number;
   ytdlp_cookies_file: string;
   ytdlp_cookies_browser: string;
+  up_dynamics_enabled: boolean;
+  up_dynamics_poll_interval_seconds: number;
+  oss_bucket: string;
+  oss_endpoint: string;
+  oss_access_key_id: string;
+  oss_access_key_secret: string;
+  oss_access_key_secret_configured: boolean;
+  oss_public_base_url: string;
+  offpeak_schedule_default: boolean;
+  offpeak_timezone: string;
+  offpeak_peak_windows: string;
+  offpeak_peak_weekdays: string;
   settings_file_exists?: boolean;
   defaults?: {
     knowledge_note_system_prompt?: string;
@@ -581,6 +652,7 @@ export type SystemInfo = {
     name: string;
     version: string;
   };
+  deployment?: "docker" | "local" | string;
   taskModel?: {
     statuses?: string[];
   };
@@ -591,6 +663,15 @@ export type SystemInfo = {
   environment?: EnvironmentInfo;
   runtimeStartup?: RuntimeStartupInfo;
   worker?: WorkerSnapshot | null;
+  bilibiliAccount?: BilibiliAccount;
+};
+
+export type BilibiliAccount = {
+  loggedIn: boolean;
+  mid: number;
+  name: string;
+  face: string;
+  message: string;
 };
 
 export type WorkerQueueSnapshot = {

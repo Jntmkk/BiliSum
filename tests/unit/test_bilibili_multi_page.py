@@ -568,3 +568,241 @@ def test_probe_video_asset_returns_local_video_from_file_path(monkeypatch, tmp_p
     assert asset.source_url == str(local_file.resolve())
     assert asset.cover_url.startswith("/media/covers/local-")
     assert asset.duration == 93.5
+
+
+def _series_fallback_page_payload() -> dict[str, object]:
+    return {
+        "videoData": {
+            "pic": "https://example.com/current.jpg",
+            "owner": {
+                "mid": 150415653,
+                "name": "测试 UP 主",
+                "face": "https://example.com/face.jpg",
+            },
+        },
+    }
+
+
+def _patch_series_fallback(monkeypatch, series_list_payload: dict[str, object], archives_by_series: dict[str, list[dict[str, object]]]) -> None:
+    from video_sum_service import bilibili_wbi
+
+    monkeypatch.setattr(
+        service_app.video_assets,
+        "_fetch_bilibili_initial_state_payload",
+        lambda url: _series_fallback_page_payload(),
+    )
+    monkeypatch.setattr(service_app.video_assets, "load_bilibili_cookie_header", lambda: "SESSDATA=fake")
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+    def fake_signed_get(url: str, params: dict[str, object], cookie_header: str) -> dict[str, object]:
+        if "seasons_series_list" in url:
+            return series_list_payload
+        if "x/series/archives" in url:
+            return {"archives": archives_by_series.get(str(params.get("series_id")), [])}
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(bilibili_wbi, "_signed_get", fake_signed_get)
+
+
+def test_fetch_bilibili_collection_payload_falls_back_to_series(monkeypatch) -> None:
+    _patch_series_fallback(
+        monkeypatch,
+        {
+            "items_lists": {
+                "series_list": [
+                    {"meta": {"series_id": 9002, "name": "别的系列", "total": 2}},
+                    {"meta": {"series_id": 9001, "name": "测试系列", "total": 3, "cover": "//example.com/series.jpg"}},
+                ],
+            },
+        },
+        {
+            "9002": [{"bvid": "BV1zzz", "title": "无关视频", "duration": 10}],
+            "9001": [
+                {"bvid": "BV1other", "title": "第一集", "pic": "//example.com/one.jpg", "duration": 61},
+                {"bvid": "BV1current", "title": "第二集", "pic": "//example.com/two.jpg", "duration": 95},
+                {"bvid": "BV1third", "title": "第三集", "duration": 30},
+            ],
+        },
+    )
+
+    collection = service_app.video_assets.fetch_bilibili_collection_payload(
+        "https://www.bilibili.com/video/BV1current/"
+    )
+
+    assert collection is not None
+    assert collection["collection_id"] == "series-9001"
+    assert collection["title"] == "测试系列"
+    assert collection["item_count"] == 3
+    assert collection["owner_mid"] == "150415653"
+    assert collection["items"][1]["is_current"] is True
+    assert collection["items"][0]["source_url"] == "https://www.bilibili.com/video/BV1other/"
+    assert collection["items"][0]["cover_url"] == "https://example.com/one.jpg"
+    assert collection["items"][2]["cover_url"] == ""
+
+
+def test_fetch_bilibili_collection_payload_series_not_found(monkeypatch) -> None:
+    _patch_series_fallback(
+        monkeypatch,
+        {"items_lists": {"series_list": [{"meta": {"series_id": 9002, "name": "别的系列", "total": 2}}]}},
+        {"9002": [{"bvid": "BV1zzz", "title": "无关视频", "duration": 10}]},
+    )
+
+    collection = service_app.video_assets.fetch_bilibili_collection_payload(
+        "https://www.bilibili.com/video/BV1current/"
+    )
+
+    assert collection is None
+
+
+def test_fetch_bilibili_collection_payload_series_list_failure_returns_none(monkeypatch) -> None:
+    from video_sum_service import bilibili_wbi
+
+    monkeypatch.setattr(
+        service_app.video_assets,
+        "_fetch_bilibili_initial_state_payload",
+        lambda url: _series_fallback_page_payload(),
+    )
+    monkeypatch.setattr(service_app.video_assets, "load_bilibili_cookie_header", lambda: "SESSDATA=fake")
+
+    def fake_signed_get(url: str, params: dict[str, object], cookie_header: str) -> dict[str, object]:
+        raise bilibili_wbi.UpstreamError("boom")
+
+    monkeypatch.setattr(bilibili_wbi, "_signed_get", fake_signed_get)
+
+    collection = service_app.video_assets.fetch_bilibili_collection_payload(
+        "https://www.bilibili.com/video/BV1current/"
+    )
+
+    assert collection is None
+
+
+def test_fetch_bilibili_collection_payload_series_pagination_hit_on_later_page(monkeypatch) -> None:
+    from video_sum_service import bilibili_wbi
+
+    page_one = [
+        {"bvid": f"BV1p{i:02d}", "title": f"视频{i}", "duration": 60}
+        for i in range(20)
+    ]
+    page_two = [
+        {"bvid": "BV1other", "title": "别的视频", "duration": 30},
+        {"bvid": "BV1current", "title": "当前视频", "duration": 95},
+        {"bvid": "BV1third", "title": "第三个", "duration": 45},
+        {"bvid": "BV1fourth", "title": "第四个", "duration": 50},
+        {"bvid": "BV1fifth", "title": "第五个", "duration": 55},
+    ]
+    calls: list[int] = []
+
+    monkeypatch.setattr(
+        service_app.video_assets,
+        "_fetch_bilibili_initial_state_payload",
+        lambda url: _series_fallback_page_payload(),
+    )
+    monkeypatch.setattr(service_app.video_assets, "load_bilibili_cookie_header", lambda: "SESSDATA=fake")
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+    def fake_signed_get(url: str, params: dict[str, object], cookie_header: str) -> dict[str, object]:
+        if "seasons_series_list" in url:
+            return {"items_lists": {"series_list": [{"meta": {"series_id": 9001, "name": "测试系列", "total": 25}}]}}
+        calls.append(int(params["pn"]))
+        if int(params["pn"]) == 1:
+            return {"archives": page_one, "page": {"num": 1, "size": 20, "total": 25}}
+        return {"archives": page_two, "page": {"num": 2, "size": 20, "total": 25}}
+
+    monkeypatch.setattr(bilibili_wbi, "_signed_get", fake_signed_get)
+
+    collection = service_app.video_assets.fetch_bilibili_collection_payload(
+        "https://www.bilibili.com/video/BV1current/"
+    )
+
+    assert collection is not None
+    assert collection["collection_id"] == "series-9001"
+    assert collection["item_count"] == 25
+    assert calls == [1, 2]
+    current = [item for item in collection["items"] if item["is_current"]]
+    assert len(current) == 1
+    assert current[0]["position"] == 22
+
+
+def test_fetch_bilibili_collection_payload_series_wrap_detection_stops_scan(monkeypatch) -> None:
+    from video_sum_service import bilibili_wbi
+
+    repeated_page = [
+        {"bvid": f"BV1w{i:02d}", "title": f"重复{i}", "duration": 60}
+        for i in range(20)
+    ]
+    calls: list[int] = []
+
+    monkeypatch.setattr(
+        service_app.video_assets,
+        "_fetch_bilibili_initial_state_payload",
+        lambda url: _series_fallback_page_payload(),
+    )
+    monkeypatch.setattr(service_app.video_assets, "load_bilibili_cookie_header", lambda: "SESSDATA=fake")
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+    def fake_signed_get(url: str, params: dict[str, object], cookie_header: str) -> dict[str, object]:
+        if "seasons_series_list" in url:
+            return {"items_lists": {"series_list": [{"meta": {"series_id": 9001, "name": "测试系列", "total": 20}}]}}
+        calls.append(int(params["pn"]))
+        return {"archives": list(repeated_page)}
+
+    monkeypatch.setattr(bilibili_wbi, "_signed_get", fake_signed_get)
+
+    collection = service_app.video_assets.fetch_bilibili_collection_payload(
+        "https://www.bilibili.com/video/BV1current/"
+    )
+
+    assert collection is None
+    assert calls == [1, 2]
+
+
+def test_with_trailing_slash_appends_before_query() -> None:
+    """尾斜杠必须落在 query 之前，否则拼出 /video/BV1x/?p=2 之外的错 URL。"""
+    fix = service_app.video_assets._with_trailing_slash
+
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/"
+    )
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD?p=2") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/?p=2"
+    )
+    # 已有斜杠时不重复添加；带斜杠的 query 形式保持原样。
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD/") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/"
+    )
+    assert fix("https://www.bilibili.com/video/BV1xx411c7mD/?p=2") == (
+        "https://www.bilibili.com/video/BV1xx411c7mD/?p=2"
+    )
+    # 无路径的 host-only URL 不应变成 https://www.bilibili.com/。
+    assert fix("https://www.bilibili.com") == "https://www.bilibili.com"
+
+
+def test_initial_state_payload_requests_url_with_trailing_slash(monkeypatch) -> None:
+    """B 站 WAF 对无尾斜杠 /video/BVxxx 的重定向链返回 412。
+
+    normalize 产物不含斜杠，因此补齐必须发生在发请求之前——分P 目录
+    (fetch_bilibili_page_catalog_payload) 曾因漏补而稳定拿到 0 个分P。
+    """
+    import httpx
+
+    seen: list[str] = []
+
+    class _FakeResponse:
+        status_code = 200
+        text = '__INITIAL_STATE__ = {"videoData": {"pages": [{"page": 1}]}}; (function(){})()'
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs: object) -> _FakeResponse:
+        seen.append(url)
+        return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(service_app.video_assets, "load_bilibili_cookie_header", lambda: None)
+
+    service_app.video_assets.fetch_bilibili_page_catalog_payload(
+        "https://www.bilibili.com/video/BV1xx411c7mD"
+    )
+
+    assert seen == ["https://www.bilibili.com/video/BV1xx411c7mD/"]

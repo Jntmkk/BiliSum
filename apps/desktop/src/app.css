@@ -8,6 +8,7 @@
 @import "./styles/07-dialogs.css";
 @import "./styles/08-responsive.css";
 @import "./styles/09-knowledge.css";
+@import "./styles/10-up-dynamics.css";
 
 .auth-shell {
   min-height: 100vh;

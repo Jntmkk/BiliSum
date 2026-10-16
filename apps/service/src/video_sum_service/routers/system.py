@@ -23,6 +23,7 @@ from video_sum_infra.runtime import (
 )
 
 from video_sum_service.auth import (
+    SESSION_COOKIE_NAME,
     describe_token_source,
     extract_bearer_token,
     request_is_authorized,
@@ -33,7 +34,9 @@ from video_sum_service.bilibili_cookies import (
     create_bilibili_login_qrcode,
     poll_bilibili_login_qrcode,
 )
+from video_sum_service.bilibili_wbi import describe_bilibili_account
 from video_sum_service.context import access_token_manager, app_info, logger, settings_manager
+from video_sum_service import feedback as feedback_channel
 from video_sum_service.integrations import (
     extract_http_error_detail,
     probe_asr_connection,
@@ -66,6 +69,8 @@ from video_sum_service.runtime_support import (
     verify_embedding_model,
 )
 from video_sum_service.schemas import (
+    FeedbackCreateRequest,
+    FeedbackCreateResponse,
     PromptMatchRequest,
     PromptMatchResponse,
     PromptPresetCreateRequest,
@@ -267,6 +272,7 @@ def system_info(request: Request, runtime_channel: str | None = None, refresh: b
     worker_snapshot = worker.snapshot() if hasattr(worker, "snapshot") else None
     return {
         "application": {"name": app_info.name, "version": app_info.version},
+        "deployment": feedback_channel.detect_deployment(),
         "service": {
             "host": current_settings.host,
             "port": current_settings.port,
@@ -291,6 +297,7 @@ def system_info(request: Request, runtime_channel: str | None = None, refresh: b
             "threads": [thread.name for thread in threading.enumerate()[:80]],
         },
         "worker": worker_snapshot,
+        "bilibiliAccount": describe_bilibili_account(),
         "taskModel": {"statuses": [status.value for status in TaskStatus]},
         "environment": environment,
     }
@@ -324,6 +331,43 @@ def create_auth_session(request: Request) -> JSONResponse:
     )
     set_session_cookie(response, token or "")
     return response
+
+
+@router.post("/feedback", response_model=FeedbackCreateResponse)
+def create_feedback(request: Request, payload: FeedbackCreateRequest) -> FeedbackCreateResponse:
+    token = os.environ.get(feedback_channel.FEEDBACK_TOKEN_ENV, "").strip()
+    if not token:
+        detail = feedback_channel.FeedbackChannelNotConfiguredError.detail
+        raise HTTPException(status_code=503, detail=detail)
+    session_token = (
+        request.cookies.get(SESSION_COOKIE_NAME)
+        or request.headers.get("x-forwarded-for")
+        or "anonymous"
+    )
+    if not feedback_channel.check_rate_limit(session_token):
+        detail = feedback_channel.FeedbackRateLimitedError.detail
+        raise HTTPException(status_code=429, detail=detail)
+    repo = (
+        os.environ.get(feedback_channel.FEEDBACK_REPO_ENV, "").strip()
+        or feedback_channel.DEFAULT_FEEDBACK_REPO
+    )
+    client_context = {key: value for key, value in payload.context.items() if isinstance(key, str)}
+    issue = feedback_channel.build_issue(
+        category=payload.category,
+        description=payload.description,
+        client_context=client_context,
+        server_side_context=feedback_channel.server_context(),
+    )
+    try:
+        created = feedback_channel.create_github_issue(
+            repo=repo,
+            token=token,
+            issue=issue,
+            user_agent=f"{app_info.name}/{app_info.version}",
+        )
+    except feedback_channel.FeedbackError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    return FeedbackCreateResponse(**created)
 
 
 @router.get("/app/update")
@@ -461,6 +505,12 @@ def get_bilibili_cookies_qrcode(qrcode_key: str) -> dict[str, object]:
         return poll_bilibili_login_qrcode(qrcode_key)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/bilibili/account")
+def get_bilibili_account(refresh: bool = False) -> dict[str, object]:
+    """当前 B 站登录账号（昵称/头像），供顶栏展示；refresh=1 绕过缓存重查。"""
+    return describe_bilibili_account(force=refresh)
 
 
 @router.get("/environment")

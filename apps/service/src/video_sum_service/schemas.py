@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -21,12 +21,15 @@ class VideoTaskCreateRequest(BaseModel):
     visual_note_mode: str | None = None
     prompt_preset_id: str | None = None
     summary_scope: str | None = None
+    # "immediate" 照常执行；"offpeak" 避开 LLM 高峰计价（闲时仍立即执行）。
+    schedule: Literal["immediate", "offpeak"] | None = None
 
 
 class VideoTaskBatchRequest(BaseModel):
     page_numbers: list[int] = Field(default_factory=list)
     confirm: bool = False
     prompt_preset_id: str | None = None
+    schedule: Literal["immediate", "offpeak"] | None = None
 
 
 class AggregateSummaryRequest(BaseModel):
@@ -217,6 +220,44 @@ class VideoCollectionResponse(BaseModel):
     new_items: list[VideoCollectionItemResponse] = Field(default_factory=list)
 
 
+class VideoCollectionSummaryResponse(BaseModel):
+    """Collection metadata for library listings, built without loading member
+    items. Clients fetch full detail (with items) via
+    GET /videos/collections/{collection_id} on demand."""
+
+    collection_id: str
+    title: str
+    cover_url: str = ""
+    global_order: float = 0
+    folder_order: float = 0
+    folder_id: str | None = None
+    folder_ids: list[str] = Field(default_factory=list)
+    global_pinned: bool = False
+    folder_pinned: bool = False
+    is_favorite: bool = False
+    favorite_updated_at: datetime | None = None
+    latest_video_updated_at: datetime | None = None
+    owner_mid: str | None = None
+    owner_name: str | None = None
+    owner_face: str | None = None
+    owner_url: str | None = None
+    item_count: int = 0
+    source_url: str = ""
+    summarized_count: int = 0
+    unsummarized_count: int = 0
+    last_checked_at: datetime | None = None
+    auto_check_on_open: bool = True
+    view_sort_mode: Literal[
+        "source",
+        "source_desc",
+        "recent_summary",
+        "recent_update",
+        "duration",
+        "custom",
+    ] = "source"
+    view_group_mode: Literal["none", "status", "source_section"] = "none"
+
+
 class VideoAssetSummaryResponse(BaseModel):
     video_id: str
     canonical_id: str
@@ -326,14 +367,14 @@ class VideoProbeResponse(BaseModel):
     cached: bool = False
     requires_selection: bool = False
     pages: list[VideoPageOptionResponse] = Field(default_factory=list)
-    collection: VideoCollectionResponse | None = None
+    collection: VideoCollectionSummaryResponse | None = None
 
 
 class VideoLibraryResponse(BaseModel):
     videos: list[VideoAssetSummaryResponse] = Field(default_factory=list)
     folders: list[VideoFolderResponse] = Field(default_factory=list)
     preferences: VideoLibraryPreferencesResponse = Field(default_factory=VideoLibraryPreferencesResponse)
-    collections: list[VideoCollectionResponse] = Field(default_factory=list)
+    collections: list[VideoCollectionSummaryResponse] = Field(default_factory=list)
     # 分页/筛选元数据：移动端分页后没法从 videos 推导总数与平台列表，由服务端给
     total: int = 0
     has_more: bool = False
@@ -385,6 +426,8 @@ class VideoCollectionTaskCreateRequest(BaseModel):
     visual_note_mode: str | None = None
     prompt_preset_id: str | None = None
     summary_scope: str | None = None
+    # "immediate" 照常执行；"offpeak" 避开 LLM 高峰计价（闲时仍立即执行）。
+    schedule: Literal["immediate", "offpeak"] | None = None
 
 
 class VideoCollectionTaskDispatchFailure(BaseModel):
@@ -791,3 +834,86 @@ class KnowledgeStatsResponse(BaseModel):
 
 class KnowledgeRebuildResponse(BaseModel):
     indexed_videos: int
+
+
+class UpSubscriptionCreateRequest(BaseModel):
+    query: str
+
+
+class UpSubscriptionUpdateRequest(BaseModel):
+    enabled: bool | None = None
+
+
+class UpSubscriptionResponse(BaseModel):
+    subscription_id: str
+    mid: str
+    up_name: str
+    up_face_url: str
+    enabled: bool
+    last_checked_at: datetime | None = None
+    last_error: str | None = None
+    consecutive_failures: int = 0
+    unread_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class UpDetectedVideoResponse(BaseModel):
+    detection_id: str
+    subscription_id: str
+    bvid: str
+    aid: int | None = None
+    title: str
+    cover_url: str
+    duration: int = 0
+    pubdate: int = 0
+    description: str = ""
+    video_id: str | None = None
+    task_id: str | None = None
+    task_status: str | None = None
+    unread: bool = True
+    detection_status: str = "new"
+    created_at: datetime | None = None
+
+
+class UpDynamicsFeedResponse(BaseModel):
+    items: list[UpDetectedVideoResponse]
+    total: int
+    page: int
+    page_size: int
+    unread_count: int
+
+
+class UpDynamicsUnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+class UpDynamicsStatusResponse(BaseModel):
+    enabled: bool
+    poll_interval_seconds: int
+    cookie_ready: bool
+    watcher_running: bool
+    last_round_at: str | None = None
+    last_round_error: str | None = None
+    subscription_count: int
+
+
+class UpDynamicsMarkReadRequest(BaseModel):
+    detection_ids: list[str] | None = None
+    subscription_id: str | None = None
+    mark_all: bool = False
+
+
+class UpDynamicsRefreshResponse(BaseModel):
+    accepted: bool
+
+
+class FeedbackCreateRequest(BaseModel):
+    category: Literal["bug", "feature", "question", "other"] = "other"
+    description: str = Field(min_length=5, max_length=5000)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackCreateResponse(BaseModel):
+    issue_url: str
+    issue_number: int

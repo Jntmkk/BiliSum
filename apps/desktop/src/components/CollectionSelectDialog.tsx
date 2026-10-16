@@ -8,7 +8,7 @@ type CollectionSelectDialogProps = {
   video: VideoAssetSummary | null;
   collection: VideoCollection | null;
   onClose(): void;
-  onChoose(scope: "single" | "collection", items?: VideoCollectionItem[]): void;
+  onChoose(scope: "single" | "collection", items?: VideoCollectionItem[], schedule?: "immediate" | "offpeak"): void;
 };
 
 type CollectionSelectView = "grid" | "list";
@@ -32,6 +32,7 @@ export function CollectionSelectDialog({
 }: CollectionSelectDialogProps) {
   const [selectedBvids, setSelectedBvids] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<CollectionSelectView>("grid");
+  const [schedule, setSchedule] = useState<"immediate" | "offpeak">("offpeak");
   const [heroImageFailed, setHeroImageFailed] = useState(false);
   const [selectionDragActive, setSelectionDragActive] = useState(false);
   const selectionDragRef = useRef<CollectionSelectionDrag | null>(null);
@@ -48,6 +49,7 @@ export function CollectionSelectDialog({
     selectionInitKeyRef.current = selectionInitKey;
     setSelectedBvids(getInitialSelectionBvids(video, collection));
     setViewMode("grid");
+    setSchedule("offpeak");
     setHeroImageFailed(false);
     selectionDragRef.current = null;
     setSelectionDragActive(false);
@@ -216,10 +218,18 @@ export function CollectionSelectDialog({
           </button>
         </div>
         <div className="collection-select-selection-dock" role="toolbar" aria-label="合集批量选择操作">
+          <label className="collection-select-schedule-toggle">
+            <input
+              type="checkbox"
+              checked={schedule === "offpeak"}
+              onChange={(event) => setSchedule(event.target.checked ? "offpeak" : "immediate")}
+            />
+            <span>低峰期执行（推荐，省 50%）</span>
+          </label>
           <span>{selectedItems.length ? `已选 ${selectedItems.length} 个` : "请选择视频"}</span>
           <button type="button" onClick={selectAll} disabled={selectedItems.length === collectionItems.length}>全选</button>
           <button type="button" onClick={clearSelection} disabled={!selectedItems.length}>清空</button>
-          <button className="is-primary" type="button" disabled={!selectedItems.length} onClick={() => onChoose("collection", selectedItems)}>
+          <button className="is-primary" type="button" disabled={!selectedItems.length} onClick={() => onChoose("collection", selectedItems, schedule)}>
             {selectedItems.length ? "开始总结" : "请选择视频"}
           </button>
         </div>

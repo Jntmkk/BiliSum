@@ -1,7 +1,34 @@
-import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ConfigHealth, UpdateState } from "../appModel";
-import type { WorkerQueueItem, WorkerQueueSnapshot, WorkerSnapshot } from "../types";
+import type { FeedbackCategory } from "../api";
+import type { BilibiliAccount, WorkerQueueItem, WorkerQueueSnapshot, WorkerSnapshot } from "../types";
+import { proxiedImageUrl } from "../utils";
+
+const FEEDBACK_CATEGORY_OPTIONS: Array<{ value: FeedbackCategory; label: string }> = [
+  { value: "bug", label: "问题反馈" },
+  { value: "feature", label: "功能建议" },
+  { value: "question", label: "使用疑问" },
+  { value: "other", label: "其他" },
+];
+
+function feedbackIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.75C2.5 3.06 3.06 2.5 3.75 2.5h8.5c.69 0 1.25.56 1.25 1.25v6.5c0 .69-.56 1.25-1.25 1.25H6l-2.6 2.21c-.4.34-1.02.05-1.02-.47V3.75Z" />
+      <path d="M5.25 5.5h5.5M5.25 8h3.5" />
+    </svg>
+  );
+}
+
+function accountIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="5.5" r="2.75" />
+      <path d="M2.75 13.25c.6-2.5 2.7-4 5.25-4s4.65 1.5 5.25 4" />
+    </svg>
+  );
+}
 
 type QueueStatusView = {
   completed: number;
@@ -115,8 +142,10 @@ export function TitleBar({
   updateState,
   configHealth,
   worker,
+  bilibiliAccount,
   onOpenSettings,
   onOpenUpdateDialog,
+  onSubmitFeedback,
 }: {
   darkMode: boolean;
   onToggleTheme(): void;
@@ -129,19 +158,38 @@ export function TitleBar({
   updateState: UpdateState;
   configHealth: ConfigHealth;
   worker?: WorkerSnapshot | null;
+  bilibiliAccount?: BilibiliAccount | null;
   onOpenSettings(issueKey?: string): void;
   onOpenUpdateDialog(): void;
+  onSubmitFeedback(input: { category: FeedbackCategory; description: string }): Promise<{ issueUrl: string }>;
 }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const [queuePopoverOpen, setQueuePopoverOpen] = useState(false);
   const [queuePage, setQueuePage] = useState<0 | 1>(0);
   const [completionDisplay, setCompletionDisplay] = useState<{ completed: number; total: number } | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [accountPopoverOpen, setAccountPopoverOpen] = useState(false);
+  const [accountFaceFailed, setAccountFaceFailed] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState<FeedbackCategory>("bug");
+  const [feedbackDescription, setFeedbackDescription] = useState("");
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackIssueUrl, setFeedbackIssueUrl] = useState("");
+  const [feedbackError, setFeedbackError] = useState("");
   const statusPopoverRef = useRef<HTMLDivElement | null>(null);
   const queuePopoverRef = useRef<HTMLDivElement | null>(null);
+  const feedbackPopoverRef = useRef<HTMLDivElement | null>(null);
+  const accountPopoverRef = useRef<HTMLDivElement | null>(null);
   const completionTimerRef = useRef<number | null>(null);
   const queueWasActiveRef = useRef(false);
   const queueView = useMemo(() => queueSnapshot(worker), [worker]);
+  const accountLoggedIn = Boolean(bilibiliAccount?.loggedIn);
+  const accountName = (bilibiliAccount?.name || "").trim();
+  const accountFaceUrl = accountLoggedIn && bilibiliAccount?.face ? proxiedImageUrl(bilibiliAccount.face) : "";
+  const accountStatusText = accountLoggedIn
+    ? "B 站登录态有效。"
+    : bilibiliAccount?.message || "尚未配置 B 站登录态。";
+  const accountLabel = accountLoggedIn ? accountName || `UID ${bilibiliAccount?.mid || "未知"}` : "未登录";
   const isDesktopWindowControlsAvailable = Boolean(window.desktop?.window);
   const isMacOS = window.desktop?.window?.platform === "darwin";
 
@@ -163,6 +211,12 @@ export function TitleBar({
       }
       if (!queuePopoverRef.current?.contains(target)) {
         setQueuePopoverOpen(false);
+      }
+      if (!feedbackPopoverRef.current?.contains(target)) {
+        setFeedbackOpen(false);
+      }
+      if (!accountPopoverRef.current?.contains(target)) {
+        setAccountPopoverOpen(false);
       }
     }
 
@@ -200,12 +254,18 @@ export function TitleBar({
     }
   }, []);
 
+  useEffect(() => {
+    setAccountFaceFailed(false);
+  }, [accountFaceUrl]);
+
   function handleStatusPopoverKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Escape") {
       return;
     }
     setStatusPopoverOpen(false);
     setQueuePopoverOpen(false);
+    setFeedbackOpen(false);
+    setAccountPopoverOpen(false);
   }
 
   const handleMaximize = async () => {
@@ -299,12 +359,55 @@ export function TitleBar({
 
   function toggleQueuePopover() {
     setStatusPopoverOpen(false);
+    setAccountPopoverOpen(false);
     setQueuePopoverOpen((current) => !current);
   }
 
   function toggleStatusPopover() {
     setQueuePopoverOpen(false);
+    setFeedbackOpen(false);
+    setAccountPopoverOpen(false);
     setStatusPopoverOpen((current) => !current);
+  }
+
+  function toggleAccountPopover() {
+    setStatusPopoverOpen(false);
+    setQueuePopoverOpen(false);
+    setFeedbackOpen(false);
+    setAccountPopoverOpen((current) => !current);
+  }
+
+  function toggleFeedbackPopover() {
+    setStatusPopoverOpen(false);
+    setQueuePopoverOpen(false);
+    setAccountPopoverOpen(false);
+    setFeedbackOpen((current) => {
+      if (current) {
+        return false;
+      }
+      setFeedbackError("");
+      setFeedbackIssueUrl("");
+      return true;
+    });
+  }
+
+  async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const description = feedbackDescription.trim();
+    if (description.length < 5) {
+      setFeedbackError("请至少填写 5 个字符的问题描述。");
+      return;
+    }
+    setFeedbackSubmitting(true);
+    setFeedbackError("");
+    try {
+      const result = await onSubmitFeedback({ category: feedbackCategory, description });
+      setFeedbackIssueUrl(result.issueUrl);
+    } catch (error) {
+      setFeedbackError(error instanceof Error ? error.message : "提交失败，请稍后重试。");
+    } finally {
+      setFeedbackSubmitting(false);
+    }
   }
 
   return (
@@ -315,6 +418,9 @@ export function TitleBar({
           <img src="/static/assets/icons/icon.svg" alt="" />
         </div>
         <span className="title-bar-brand-text">BiliSum</span>
+        {version && version !== "-" ? (
+          <span className="title-bar-version" title={`部署版本 ${version}`}>v{version}</span>
+        ) : null}
       </div>
       <div className="title-bar-drag-region" />
       <div className="title-bar-controls">
@@ -502,6 +608,141 @@ export function TitleBar({
                 </button>
               </div>
             ) : null}
+          </div>
+        </div>
+        <div
+          className={`title-bar-account-wrap ${accountPopoverOpen ? "is-open" : ""}`}
+          ref={accountPopoverRef}
+          onKeyDown={handleStatusPopoverKeyDown}
+        >
+          <button
+            className={`title-bar-account-pill ${accountLoggedIn ? "" : "is-offline"}`}
+            type="button"
+            onClick={toggleAccountPopover}
+            aria-label="B 站账号"
+            aria-expanded={accountPopoverOpen}
+            aria-haspopup="dialog"
+            title={accountLoggedIn ? `${accountLabel} · UID ${bilibiliAccount?.mid || "未知"}` : accountStatusText}
+          >
+            {accountFaceUrl && !accountFaceFailed ? (
+              <img
+                className="title-bar-account-face"
+                src={accountFaceUrl}
+                alt=""
+                loading="lazy"
+                onError={() => setAccountFaceFailed(true)}
+              />
+            ) : (
+              <span className="title-bar-account-face is-placeholder" aria-hidden="true">
+                {accountLoggedIn && accountName ? accountName.slice(0, 1) : accountIcon()}
+              </span>
+            )}
+            <span className="title-bar-account-name">{accountLabel}</span>
+          </button>
+          <div
+            className={`title-bar-account-popover ${accountPopoverOpen ? "is-visible" : ""}`}
+            role="dialog"
+            aria-label="B 站账号详情"
+          >
+            <div className="title-bar-account-head">
+              {accountFaceUrl && !accountFaceFailed ? (
+                <img
+                  className="title-bar-account-face is-large"
+                  src={accountFaceUrl}
+                  alt=""
+                  onError={() => setAccountFaceFailed(true)}
+                />
+              ) : (
+                <span className="title-bar-account-face is-large is-placeholder" aria-hidden="true">
+                  {accountLoggedIn && accountName ? accountName.slice(0, 1) : accountIcon()}
+                </span>
+              )}
+              <div className="title-bar-account-copy">
+                <strong>{accountLoggedIn ? accountName || "未知账号" : "未登录 B 站"}</strong>
+                <small>{accountLoggedIn ? `UID ${bilibiliAccount?.mid || "未知"}` : "登录后可减少风控与限流"}</small>
+              </div>
+            </div>
+            <p className="title-bar-account-note">{accountStatusText}</p>
+            <button
+              className="secondary-button title-bar-account-action"
+              type="button"
+              onClick={() => {
+                setAccountPopoverOpen(false);
+                onOpenSettings("ytdlp_cookies_file");
+              }}
+            >
+              {accountLoggedIn ? "更换 B 站账号" : "前往登录"}
+            </button>
+          </div>
+        </div>
+        <div
+          className={`title-bar-feedback-wrap ${feedbackOpen ? "is-open" : ""}`}
+          ref={feedbackPopoverRef}
+        >
+          <button
+            className="title-bar-button"
+            type="button"
+            onClick={toggleFeedbackPopover}
+            aria-label="反馈问题"
+            aria-expanded={feedbackOpen}
+            aria-haspopup="dialog"
+            title="反馈问题"
+          >
+            {feedbackIcon()}
+          </button>
+          <div
+            className={`title-bar-feedback-popover ${feedbackOpen ? "is-visible" : ""}`}
+            role="dialog"
+            aria-label="反馈问题"
+          >
+            {feedbackIssueUrl ? (
+              <div className="title-bar-feedback-success">
+                <p>已提交，感谢反馈！</p>
+                <a href={feedbackIssueUrl} target="_blank" rel="noreferrer noopener">在 GitHub 上查看进展</a>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    setFeedbackIssueUrl("");
+                    setFeedbackDescription("");
+                    setFeedbackCategory("bug");
+                  }}
+                >
+                  继续反馈
+                </button>
+              </div>
+            ) : (
+              <form className="title-bar-feedback-form" onSubmit={handleFeedbackSubmit}>
+                <label className="title-bar-feedback-field">
+                  <span>反馈类型</span>
+                  <select
+                    className="select-field"
+                    value={feedbackCategory}
+                    onChange={(event) => setFeedbackCategory(event.target.value as FeedbackCategory)}
+                  >
+                    {FEEDBACK_CATEGORY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="title-bar-feedback-field">
+                  <span>问题描述</span>
+                  <textarea
+                    className="textarea-field"
+                    value={feedbackDescription}
+                    rows={4}
+                    maxLength={5000}
+                    placeholder="描述你遇到的问题…"
+                    onChange={(event) => setFeedbackDescription(event.target.value)}
+                  />
+                </label>
+                {feedbackError ? <p className="title-bar-feedback-error">{feedbackError}</p> : null}
+                <button className="primary-button" type="submit" disabled={feedbackSubmitting}>
+                  {feedbackSubmitting ? "提交中…" : "提交反馈"}
+                </button>
+                <p className="title-bar-feedback-note">提交后将自动附带当前页面、端类型与版本等环境信息。</p>
+              </form>
+            )}
           </div>
         </div>
         <button

@@ -328,6 +328,7 @@ def _create_video_task_record(
     visual_note_mode: str | None = None,
     prompt_preset_id: str | None = None,
     summary_scope: str | None = None,
+    schedule: str | None = None,
 ):
     record = _build_video_task_record(
         video=video,
@@ -335,6 +336,7 @@ def _create_video_task_record(
         visual_note_mode=visual_note_mode,
         prompt_preset_id=prompt_preset_id,
         summary_scope=summary_scope,
+        schedule=schedule,
     )
     record = task_store.create_task_record(record)
     submit_task_or_queue(app_state, task_store, record)
@@ -350,6 +352,7 @@ def _build_video_task_record(
     visual_note_mode: str | None = None,
     prompt_preset_id: str | None = None,
     summary_scope: str | None = None,
+    schedule: str | None = None,
 ) -> TaskRecord:
     page = resolve_video_page(video, page_number)
     if video.pages and page_number is not None and page is None:
@@ -358,7 +361,7 @@ def _build_video_task_record(
     source_url = page.source_url if page else video.source_url
     title = page.title if page else video.title
     logger.info(
-        "create video task video_id=%s page=%s title=%s source=%s visual_note_mode=%s prompt_preset_id=%s summary_scope=%s",
+        "create video task video_id=%s page=%s title=%s source=%s visual_note_mode=%s prompt_preset_id=%s summary_scope=%s schedule=%s",
         video.video_id,
         page.page if page else None,
         title,
@@ -366,6 +369,7 @@ def _build_video_task_record(
         visual_note_mode,
         prompt_preset_id,
         summary_scope,
+        schedule,
     )
     input_type = InputType.URL
     if str(video.platform or "").lower() == "local":
@@ -377,6 +381,8 @@ def _build_video_task_record(
         task_input.options.prompt_preset_id = prompt_preset_id
     if summary_scope is not None:
         task_input.options.summary_scope = summary_scope
+    if schedule is not None:
+        task_input.options.schedule = schedule
     return TaskRecord(
         task_input=task_input,
         video_id=video.video_id,
@@ -556,17 +562,17 @@ def probe_video(request: VideoProbeRequest, app_request: Request) -> VideoProbeR
         collection_payload = fetch_bilibili_collection_payload(request.url)
         if collection_payload:
             collection_id = str(collection_payload.get("collection_id") or "")
-            existing_collection = task_store.get_video_collection(collection_id) if collection_id else None
-            existing_bvids = {item.bvid for item in existing_collection.items} if existing_collection else set()
+            existing_collection = task_store.get_video_collection_summary(collection_id) if collection_id else None
+            existing_bvids = set(task_store.list_video_collection_bvids(collection_id)) if existing_collection else set()
             _ensure_collection_assets(
                 task_store,
                 collection_payload,
                 hide_existing=existing_collection is None,
                 existing_bvids=existing_bvids,
             )
-            collection = task_store.upsert_video_collection(collection_payload, request.url)
+            task_store.upsert_video_collection(collection_payload, request.url)
             task_store.initialize_video_collection_visibility(collection_id)
-            collection = task_store.get_video_collection(collection_id) or collection
+            collection = task_store.get_video_collection_summary(collection_id)
     return VideoProbeResponse(
         video=asset.to_summary(),
         cached=cached,
@@ -643,7 +649,7 @@ def get_video_library(
 ) -> VideoLibraryResponse:
     """视频库列表。默认不带任何分页/筛选参数时行为与旧版一致（桌面端不受影响）。"""
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    collections = task_store.list_video_collections()
+    collections = task_store.list_video_collection_summaries()
     for collection in collections:
         task_store.initialize_video_collection_visibility(collection.collection_id)
     videos, total = task_store.query_video_assets(
@@ -661,7 +667,7 @@ def get_video_library(
         videos=[localize_video_cover(task_store, video).to_summary() for video in videos],
         folders=task_store.list_video_folders(),
         preferences=task_store.get_library_preferences(),
-        collections=task_store.list_video_collections(),
+        collections=collections,
         total=total,
         has_more=(offset + len(videos)) < total,
         platforms=task_store.list_video_platforms(include_hidden=include_collection_videos),
@@ -792,6 +798,7 @@ def create_video_collection_tasks(
         "visual_note_mode": payload.visual_note_mode,
         "prompt_preset_id": payload.prompt_preset_id,
         "summary_scope": payload.summary_scope,
+        "schedule": payload.schedule,
     }
     request_fingerprint = hashlib.sha256(
         json.dumps(
@@ -808,6 +815,7 @@ def create_video_collection_tasks(
             visual_note_mode=payload.visual_note_mode,
             prompt_preset_id=payload.prompt_preset_id,
             summary_scope=payload.summary_scope,
+            schedule=payload.schedule,
         )
         for video in videos
     ]
@@ -1073,14 +1081,14 @@ def reorder_video_library(payload: VideoLibraryReorderRequest, request: Request)
         task_store.reorder_library_items([(item.kind, item.id) for item in payload.items], folder_id=payload.folder_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    collections = task_store.list_video_collections()
+    collections = task_store.list_video_collection_summaries()
     for collection in collections:
         task_store.initialize_video_collection_visibility(collection.collection_id)
     return VideoLibraryResponse(
         videos=[localize_video_cover(task_store, video).to_summary() for video in task_store.list_video_assets()],
         folders=task_store.list_video_folders(),
         preferences=task_store.get_library_preferences(),
-        collections=task_store.list_video_collections(),
+        collections=collections,
     )
 
 
@@ -1191,6 +1199,7 @@ def create_video_task(
         visual_note_mode=getattr(request_body, "visual_note_mode", None) if request_body else None,
         prompt_preset_id=getattr(request_body, "prompt_preset_id", None) if request_body else None,
         summary_scope=getattr(request_body, "summary_scope", None) if request_body else None,
+        schedule=getattr(request_body, "schedule", None) if request_body else None,
     )
     return refreshed.to_detail()
 
@@ -1320,6 +1329,7 @@ def create_video_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request
         skipped_pages.extend(conflict_pages)
 
     prompt_preset_id = getattr(body, "prompt_preset_id", None)
+    schedule = getattr(body, "schedule", None)
     for page_number in creatable_page_numbers:
         refreshed = _create_video_task_record(
             app_state=request.app.state,
@@ -1327,6 +1337,7 @@ def create_video_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request
             video=video,
             page_number=page_number,
             prompt_preset_id=prompt_preset_id,
+            schedule=schedule,
         )
         created_tasks.append(refreshed.to_detail())
 

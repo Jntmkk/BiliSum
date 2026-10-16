@@ -7,7 +7,7 @@ import { LinkIcon, LocalVideoIcon } from "../components/AppIcons";
 import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import { VideoCard } from "../components/VideoCard";
 import { CollectionCard } from "../components/CollectionCard";
-import type { PromptPreset, VideoAssetSummary, VideoCollection } from "../types";
+import type { PromptPreset, VideoAssetSummary, VideoCollectionSummary } from "../types";
 import { formatDuration } from "../utils";
 
 type HomePageProps = {
@@ -34,11 +34,12 @@ type HomePageProps = {
 
 type HomeSectionItem =
   | { kind: "video"; video: VideoAssetSummary }
-  | { kind: "collection"; collection: VideoCollection };
+  | { kind: "collection"; collection: VideoCollectionSummary };
 
 type SummaryPreference = {
   noteMode: "text" | "visual";
   generateMindmap: boolean;
+  schedule: "immediate" | "offpeak";
 };
 
 const SUMMARY_PREFERENCE_STORAGE_KEY = "bilisum.summaryPreference";
@@ -67,6 +68,7 @@ const SUPPORTED_LOCAL_MEDIA_EXTENSIONS = new Set([
 const DEFAULT_SUMMARY_PREFERENCE: SummaryPreference = {
   noteMode: "text",
   generateMindmap: false,
+  schedule: "immediate",
 };
 
 function loadSummaryPreference(): SummaryPreference {
@@ -82,6 +84,7 @@ function loadSummaryPreference(): SummaryPreference {
     return {
       noteMode: parsed.noteMode === "visual" ? "visual" : "text",
       generateMindmap: Boolean(parsed.generateMindmap),
+      schedule: parsed.schedule === "offpeak" ? "offpeak" : "immediate",
     };
   } catch {
     return DEFAULT_SUMMARY_PREFERENCE;
@@ -579,6 +582,14 @@ export function HomePage({
                       onChange={(event) => { updateSummaryPreference({ ...summaryPreference, generateMindmap: event.target.checked }); dismissPreferenceHint(); }}
                     />
                     <span>生成导图</span>
+                  </label>
+                  <label className={`summary-preference-option summary-preference-toggle ${summaryPreference.schedule === "offpeak" ? "is-selected" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={summaryPreference.schedule === "offpeak"}
+                      onChange={(event) => { updateSummaryPreference({ ...summaryPreference, schedule: event.target.checked ? "offpeak" : "immediate" }); dismissPreferenceHint(); }}
+                    />
+                    <span>低峰期执行（省 50%）</span>
                   </label>
                   <div className="summary-preference-divider" />
                   <div className="summary-preference-group summary-prompt-group" onContextMenu={openPromptContextMenu}>

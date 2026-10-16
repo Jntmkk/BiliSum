@@ -98,6 +98,25 @@ def get_task_result(task_id: str, request: Request) -> TaskDetailResponse:
     return get_task(task_id, request)
 
 
+@router.post("/{task_id}/run-now", response_model=TaskDetailResponse)
+def run_task_now(task_id: str, request: Request) -> TaskDetailResponse:
+    """把等待低峰期的任务立即恢复执行（LLM 阶段按高峰价计费）。"""
+    task_store: SqliteTaskRepository = request.app.state.task_repository
+    record = task_store.get_task(task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if record.status != TaskStatus.WAITING_OFFPEAK:
+        raise HTTPException(status_code=400, detail="仅等待低峰期的任务可以立即执行。")
+    worker = getattr(request.app.state, "task_worker", None)
+    if worker is None or not hasattr(worker, "resume_offpeak_task"):
+        raise HTTPException(status_code=503, detail="后台执行器暂不可用。")
+    if not worker.resume_offpeak_task(task_id):
+        raise HTTPException(status_code=409, detail="任务无法立即执行，可能已被恢复或缺少转写结果。")
+    refreshed = task_store.get_task(task_id)
+    assert refreshed is not None
+    return refreshed.to_detail()
+
+
 @router.get("/{task_id}/mindmap", response_model=TaskMindMapResponse)
 def get_task_mindmap(task_id: str, request: Request) -> TaskMindMapResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository

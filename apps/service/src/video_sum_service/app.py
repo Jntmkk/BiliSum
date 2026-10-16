@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from video_sum_service.auth import is_auth_exempt_path, request_is_authorized, unauthorized_response
 from video_sum_core.models.tasks import TaskStatus
-from video_sum_infra.db import connect_sqlite
+from video_sum_infra.db import open_database
 from video_sum_infra.config import normalize_visual_note_mode
 from video_sum_infra.runtime import (
     activate_runtime_pythonpath,
@@ -28,7 +28,10 @@ from video_sum_service.context import CACHE_STATIC_DIR, WEB_STATIC_DIR, access_t
 from video_sum_service.integrations import probe_asr_connection, probe_llm_connection
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.knowledge.job_coordinator import KnowledgeJobCoordinator
+from video_sum_service.offpeak import OffPeakScheduler
+from video_sum_service.up_dynamics import UpDynamicsWatcher
 from video_sum_service.routers.system import router as system_router
+from video_sum_service.routers.dynamics import router as dynamics_router
 from video_sum_service.routers.knowledge import router as knowledge_router
 from video_sum_service.routers.tasks import router as tasks_router
 from video_sum_service.routers.videos import router as videos_router
@@ -108,15 +111,21 @@ def recover_incomplete_tasks(repository: SqliteTaskRepository, task_worker) -> i
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     current_settings = settings_manager.current
-    connection = connect_sqlite(current_settings.database_url)
-    repository = SqliteTaskRepository(connection)
+    session = open_database(current_settings.database_url)
+    repository = SqliteTaskRepository(session)
     repository.initialize()
     app.state.task_repository = repository
-    app.state.db_connection = connection
+    app.state.db_session = session
     app.state.settings_manager = settings_manager
     knowledge_job_coordinator = KnowledgeJobCoordinator(repository, current_settings)
     knowledge_job_coordinator.start()
     app.state.knowledge_job_coordinator = knowledge_job_coordinator
+    up_dynamics_watcher = UpDynamicsWatcher(repository, app.state)
+    up_dynamics_watcher.start()
+    app.state.up_dynamics_watcher = up_dynamics_watcher
+    offpeak_scheduler = OffPeakScheduler(repository, app.state)
+    offpeak_scheduler.start()
+    app.state.offpeak_scheduler = offpeak_scheduler
     initialize_runtime_startup_state(app.state, current_settings)
     cli_idle.start_watchdog(repository)
     start_runtime_startup(app.state, repository, current_settings, recover_incomplete_tasks)
@@ -126,6 +135,8 @@ async def lifespan(app: FastAPI):
     finally:
         request_runtime_startup_shutdown(app.state)
         knowledge_job_coordinator.stop()
+        up_dynamics_watcher.stop()
+        offpeak_scheduler.stop()
         startup_thread = getattr(app.state, "runtime_startup_thread", None)
         if startup_thread is not None and startup_thread.is_alive():
             startup_thread.join(timeout=10)
@@ -133,7 +144,8 @@ async def lifespan(app: FastAPI):
         if task_worker is not None and hasattr(task_worker, "shutdown"):
             task_worker.shutdown(wait=True, timeout=10)
         logger.info("application shutdown")
-        connection.close()
+        session.close()
+        settings_manager.close()
 
 
 app = FastAPI(
@@ -148,6 +160,7 @@ app.include_router(system_router)
 app.include_router(videos_router)
 app.include_router(tasks_router)
 app.include_router(knowledge_router)
+app.include_router(dynamics_router)
 
 
 @app.middleware("http")
@@ -185,6 +198,17 @@ def index() -> FileResponse:
 @app.get("/videos/{video_id}", include_in_schema=False)
 def video_detail_page(video_id: str) -> FileResponse:
     del video_id
+    return frontend_shell_response()
+
+
+@app.get("/library", include_in_schema=False)
+def library_page() -> FileResponse:
+    return frontend_shell_response()
+
+
+@app.get("/collections/{collection_id}", include_in_schema=False)
+def collection_detail_page(collection_id: str) -> FileResponse:
+    del collection_id
     return frontend_shell_response()
 
 

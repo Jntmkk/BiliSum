@@ -74,6 +74,12 @@ jobs:
   build-and-push:
     needs: resolve-tag
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # full：完整镜像（含 knowledge extra → torch，~3.5GB）
+        # mini：瘦身镜像（无 torch，知识库功能不可用，~0.6GB）
+        variant: [full, mini]
 
     steps:
       - name: Check out repository
@@ -113,16 +119,21 @@ jobs:
           TAG: ${{ needs.resolve-tag.outputs.tag }}
           VERSION: ${{ needs.resolve-tag.outputs.version }}
           PRERELEASE: ${{ needs.resolve-tag.outputs.prerelease }}
+          VARIANT: ${{ matrix.variant }}
           HUB_REPOSITORY: bbmike253/bilisum
         run: |
           set -euo pipefail
+          suffix=""
+          if [ "${VARIANT}" = "mini" ]; then
+            suffix="-mini"
+          fi
           {
             echo "tags<<EOF"
-            echo "${HUB_REPOSITORY}:${TAG}"
-            echo "${HUB_REPOSITORY}:${VERSION}"
+            echo "${HUB_REPOSITORY}:${TAG}${suffix}"
+            echo "${HUB_REPOSITORY}:${VERSION}${suffix}"
             if [ "${PRERELEASE}" != "true" ]; then
               # 稳定版更新 latest；预发布不覆盖稳定版镜像。
-              echo "${HUB_REPOSITORY}:latest"
+              echo "${HUB_REPOSITORY}:latest${suffix}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -133,6 +144,8 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          cache-from: type=gha,scope=bilisum-docker
-          cache-to: type=gha,mode=min,scope=bilisum-docker
+          build-args: |
+            KNOWLEDGE=${{ matrix.variant == 'full' && '1' || '0' }}
+          cache-from: type=gha,scope=bilisum-docker-${{ matrix.variant }}
+          cache-to: type=gha,mode=min,scope=bilisum-docker-${{ matrix.variant }}
           tags: ${{ steps.tags.outputs.tags }}

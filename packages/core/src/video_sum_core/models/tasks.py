@@ -14,6 +14,7 @@ class InputType(str, Enum):
 class TaskStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    WAITING_OFFPEAK = "waiting_offpeak"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -27,6 +28,10 @@ class TaskOptions(BaseModel):
     prefer_subtitles: bool = True
     export_formats: list[str] = Field(default_factory=lambda: ["md", "json"])
     visual_note_mode: str | None = None
+    # "immediate" 照常执行；"offpeak" 意为「避开 LLM 高峰计价」——闲时
+    # 提交仍立即执行，仅高峰时段在转写完成后暂停 LLM 阶段（见
+    # video_sum_service.offpeak）。
+    schedule: str = "immediate"
 
 
 class TaskInput(BaseModel):
