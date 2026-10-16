@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import httpx
+
 
 @dataclass(frozen=True, slots=True)
 class NormalizedVideoUrl:
@@ -19,10 +21,55 @@ class NormalizedVideoUrl:
         yield self.canonical_id
 
 
+_B23_HOST_PATTERN = re.compile(r"(^|\.)b23\.tv$", flags=re.IGNORECASE)
+_BVID_PATTERN = re.compile(r"BV[0-9A-Za-z]+")
+
+
+def resolve_bilibili_short_url(value: str, *, timeout: float = 10.0) -> str:
+    """Resolve a b23.tv share link to the final bilibili.com URL.
+
+    Returns the original input when the host is not b23.tv, when a BV id is
+    already present, or when resolution fails / does not lead to a video page.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+    try:
+        parsed = urlparse(raw if "//" in raw else f"https://{raw}")
+    except ValueError:
+        return raw
+    host = (parsed.netloc or "").lower()
+    if not _B23_HOST_PATTERN.search(host):
+        return raw
+    if _BVID_PATTERN.search(raw):
+        return raw
+
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
+            response = client.head(raw)
+            if response.status_code >= 400:
+                response = client.get(raw)
+            final_url = str(response.url)
+    except httpx.HTTPError:
+        return raw
+    if _BVID_PATTERN.search(final_url) or "bilibili.com" in final_url:
+        return final_url
+    return raw
+
+
 def normalize_video_url(value: str) -> NormalizedVideoUrl:
     raw = (value or "").strip()
     if not raw:
         return NormalizedVideoUrl(normalized_url="", canonical_id="")
+
+    # 分享文案里通常混有标题文字，先抽出纯 URL 再解析
+    url_match = re.search(r"https?://[^\s<>，。；、（）()\[\]【】]+", raw, flags=re.IGNORECASE)
+    if url_match:
+        raw = url_match.group(0)
+
+    if re.search(r"b23\.tv", raw, flags=re.IGNORECASE) and not _BVID_PATTERN.search(raw):
+        raw = resolve_bilibili_short_url(raw)
 
     match = re.search(r"(BV[0-9A-Za-z]+)", raw, flags=re.IGNORECASE)
     if match:

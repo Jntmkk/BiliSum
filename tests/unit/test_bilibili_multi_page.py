@@ -122,6 +122,59 @@ def test_normalize_video_url_accepts_youtu_be_and_shorts() -> None:
     assert shorts_link.platform == "youtube"
 
 
+def test_normalize_video_url_resolves_b23_short_link(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        url = "https://www.bilibili.com/video/BV1xx411c7mD?p=2"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def head(self, url):
+            return FakeResponse()
+
+    monkeypatch.setattr("video_sum_core.utils.httpx.Client", FakeClient)
+
+    result = normalize_video_url("https://b23.tv/8RB5XG1")
+
+    assert result.normalized_url == "https://www.bilibili.com/video/BV1xx411c7mD?p=2"
+    assert result.canonical_id == "BV1xx411c7mD"
+    assert result.platform == "bilibili"
+    assert result.page_number == 2
+
+
+def test_normalize_video_url_keeps_b23_short_link_when_resolution_fails(monkeypatch) -> None:
+    import httpx as real_httpx
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def head(self, url):
+            raise real_httpx.ConnectError("boom")
+
+    monkeypatch.setattr("video_sum_core.utils.httpx.Client", FailingClient)
+
+    result = normalize_video_url("https://b23.tv/8RB5XG1")
+
+    assert result.normalized_url == "https://b23.tv/8RB5XG1"
+    assert result.canonical_id == ""
+    assert result.platform == "unknown"
+
+
 def test_probe_video_asset_requires_page_selection_for_multi_page(monkeypatch) -> None:
     payload = {
         "id": "BV1xx411c7mD",

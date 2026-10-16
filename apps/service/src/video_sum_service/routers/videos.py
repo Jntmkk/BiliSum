@@ -635,16 +635,42 @@ def list_videos(request: Request) -> list[VideoAssetSummaryResponse]:
 
 
 @router.get("/library", response_model=VideoLibraryResponse)
-def get_video_library(request: Request) -> VideoLibraryResponse:
+def get_video_library(
+    request: Request,
+    q: str = Query(default=""),
+    status: str = Query(default="all"),
+    platform: list[str] = Query(default=[]),
+    folder_id: list[str] = Query(default=[]),
+    favorites: bool = Query(default=False),
+    sort: str = Query(default="recent"),
+    include_collection_videos: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> VideoLibraryResponse:
+    """视频库列表。默认不带任何分页/筛选参数时行为与旧版一致（桌面端不受影响）。"""
     task_store: SqliteTaskRepository = request.app.state.task_repository
     collections = task_store.list_video_collection_summaries()
     for collection in collections:
         task_store.initialize_video_collection_visibility(collection.collection_id)
+    videos, total = task_store.query_video_assets(
+        query=q,
+        status=status,
+        platforms=platform,
+        folder_ids=folder_id,
+        favorites_only=favorites,
+        sort=sort,
+        include_hidden=include_collection_videos,
+        limit=limit,
+        offset=offset,
+    )
     return VideoLibraryResponse(
-        videos=[localize_video_cover(task_store, video).to_summary() for video in task_store.list_video_assets()],
+        videos=[localize_video_cover(task_store, video).to_summary() for video in videos],
         folders=task_store.list_video_folders(),
         preferences=task_store.get_library_preferences(),
         collections=collections,
+        total=total,
+        has_more=(offset + len(videos)) < total,
+        platforms=task_store.list_video_platforms(include_hidden=include_collection_videos),
     )
 
 

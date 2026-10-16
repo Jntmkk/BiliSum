@@ -26,6 +26,41 @@ from video_sum_service.schemas import (
 
 _UNSET = object()
 
+# 与移动端 apps/mobile/src/features/library.ts 的 UNFILED 保持一致
+UNFILED_FOLDER_SENTINEL = "__none__"
+
+# 与移动端 utils/status.ts 的 isActiveStatus 对齐（TaskStatus 里没有 waiting_offpeak）
+_ACTIVE_STATUSES = {TaskStatus.QUEUED, TaskStatus.RUNNING}
+
+
+def _matches_video_status(video: VideoAssetRecord, status: str) -> bool:
+    """状态筛选语义与移动端 features/library.ts:matchesStatus 完全一致。"""
+    active = video.latest_status in _ACTIVE_STATUSES
+    has_result = video.latest_result is not None
+    if status == "summarized":
+        return has_result
+    if status == "unsummarized":
+        return not has_result and not active
+    if status == "active":
+        return active
+    if status == "failed":
+        return video.latest_status is TaskStatus.FAILED and not has_result
+    return True
+
+
+def _sort_video_assets(
+    records: list[VideoAssetRecord], sort: str
+) -> list[VideoAssetRecord]:
+    """排序键与移动端 features/library.ts:bySort 对齐；``video_id`` 做稳定次级键，保证分页不重不漏。"""
+    oldest = datetime.min.replace(tzinfo=UTC)
+    if sort == "recentSummary":
+        return sorted(records, key=lambda r: (r.last_summary_at or oldest, r.video_id), reverse=True)
+    if sort == "durationDesc":
+        return sorted(records, key=lambda r: (r.duration or 0, r.video_id), reverse=True)
+    if sort == "title":
+        return sorted(records, key=lambda r: (r.title or "", r.video_id))
+    return sorted(records, key=lambda r: (r.created_at, r.video_id), reverse=True)
+
 
 def _collection_current_bvid(source_url: str) -> str:
     """从合集来源视频 URL 解析当前视频 bvid（小写），用于标记 is_current。"""
@@ -750,6 +785,57 @@ class TaskRepository:
         return self._row_to_video_asset(row) if row is not None else None
 
     def list_video_assets(self) -> list[VideoAssetRecord]:
+        """默认视图（``is_global_visible=1``、旧排序、全量）。桌面端等旧调用方走这里。"""
+        return self.query_video_assets()[0]
+
+    def query_video_assets(
+        self,
+        *,
+        query: str | None = None,
+        status: str = "all",
+        platforms: list[str] | None = None,
+        folder_ids: list[str] | None = None,
+        favorites_only: bool = False,
+        sort: str | None = None,
+        include_hidden: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[VideoAssetRecord], int]:
+        """按筛选条件返回视频资产，附带**过滤后**的总数（用于分页）。
+
+        ``sort=None`` 保留旧排序（``global_pinned``/``global_order``/``updated_at``），
+        只有显式传 ``sort`` 才走新排序分支。
+        ``include_hidden=True`` 去掉 ``is_global_visible`` 过滤，让合集脚手架视频也进入平铺。
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if not include_hidden:
+            clauses.append("v.is_global_visible = 1")
+        if query and query.strip():
+            like = f"%{query.strip()}%"
+            clauses.append("(v.title LIKE ? COLLATE NOCASE OR v.canonical_id LIKE ? COLLATE NOCASE)")
+            params.extend([like, like])
+        if platforms:
+            clauses.append(f"v.platform IN ({','.join('?' for _ in platforms)})")
+            params.extend(platforms)
+        if favorites_only:
+            clauses.append("v.is_favorite = 1")
+        if folder_ids:
+            membership_parts: list[str] = []
+            named = [fid for fid in folder_ids if fid != UNFILED_FOLDER_SENTINEL]
+            if named:
+                membership_parts.append(
+                    "EXISTS (SELECT 1 FROM video_folder_memberships m "
+                    f"WHERE m.video_id = v.video_id AND m.folder_id IN ({','.join('?' for _ in named)}))"
+                )
+                params.extend(named)
+            if UNFILED_FOLDER_SENTINEL in folder_ids:
+                membership_parts.append(
+                    "NOT EXISTS (SELECT 1 FROM video_folder_memberships m WHERE m.video_id = v.video_id)"
+                )
+            clauses.append("(" + " OR ".join(membership_parts) + ")")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        # 走 master 重写后的 session/cursor 与 folder_map 映射（本文件已无 sqlite_cursor）
         with self._lock, self._session.cursor() as cursor:
             rows = cursor.execute(
                 """
@@ -757,9 +843,10 @@ class TaskRepository:
                     {columns}
                 FROM video_assets v
                 LEFT JOIN task_results r ON r.task_id = v.latest_task_id
-                WHERE v.is_global_visible = 1
+                {where}
                 ORDER BY v.global_pinned DESC, v.global_order ASC, v.updated_at DESC
-                """.format(columns=self._select_video_columns("v"))
+                """.format(columns=self._select_video_columns("v"), where=where),
+                tuple(params),
             ).fetchall()
             folder_map = self._folder_ids_map([str(row["video_id"]) for row in rows])
         videos = [
@@ -777,7 +864,24 @@ class TaskRepository:
             video_updated = video.updated_at.timestamp()
             if video_updated > current_updated or ("?p=" in current.canonical_id and "?p=" not in video.canonical_id):
                 grouped[family] = video
-        return list(grouped.values())
+        # 状态筛选放在去重之后，否则同一家族的 P 分集会被重复计数
+        records = [video for video in grouped.values() if _matches_video_status(video, status)]
+        if sort is not None:
+            records = _sort_video_assets(records, sort)
+        total = len(records)
+        bounded_offset = max(0, offset)
+        if limit is None:
+            return (records[bounded_offset:] if bounded_offset else records), total
+        return records[bounded_offset : bounded_offset + max(0, limit)], total
+
+    def list_video_platforms(self, *, include_hidden: bool = False) -> list[str]:
+        """筛选面板用的平台 facet。分页后没法从当前页推导，所以单独取全量去重。"""
+        where = "" if include_hidden else " WHERE is_global_visible = 1"
+        with self._lock, self._session.cursor() as cursor:
+            rows = cursor.execute(
+                f"SELECT DISTINCT platform FROM video_assets{where} ORDER BY platform ASC"
+            ).fetchall()
+        return [str(row["platform"]) for row in rows]
 
     def create_task(
         self,
