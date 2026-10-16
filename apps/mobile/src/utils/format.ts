@@ -24,3 +24,15 @@ export function formatDuration(seconds: number | null): string {
   if (m > 0) return s > 0 ? `${m} 分 ${s} 秒` : `${m} 分钟`;
   return `${s} 秒`;
 }
+
+/** 时钟格式：12:34 / 1:02:03，用于封面角标与时间轴 */
+export function formatClock(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '';
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+}

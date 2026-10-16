@@ -1,45 +1,30 @@
-import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { NativeTabs } from 'expo-router/unstable-native-tabs';
 
-import { useColorScheme } from '@/components/useColorScheme';
-import Colors from '@/constants/Colors';
+import { useColors } from '@/src/theme/colors';
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function TabsLayout() {
+  const colors = useColors();
 
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        headerShown: true,
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: '任务',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="list" color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="new"
-        options={{
-          title: '新建',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="add-circle-outline" color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: '我的',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" color={color} size={size} />
-          ),
-        }}
-      />
-    </Tabs>
+    <NativeTabs
+      tintColor={colors.accent}
+      backgroundColor={colors.background}
+      blurEffect="systemChromeMaterial"
+      minimizeBehavior="onScrollDown">
+      <NativeTabs.Trigger name="(library)">
+        <NativeTabs.Trigger.Label>库</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="rectangle.stack" md="video_library" />
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="collections">
+        <NativeTabs.Trigger.Label>合集</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="rectangle.stack.badge.play" md="collections_bookmark" />
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="settings">
+        <NativeTabs.Trigger.Label>我的</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="person.crop.circle" md="account_circle" />
+      </NativeTabs.Trigger>
+    </NativeTabs>
   );
 }
