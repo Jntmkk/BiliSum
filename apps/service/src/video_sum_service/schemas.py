@@ -334,6 +334,10 @@ class VideoLibraryResponse(BaseModel):
     folders: list[VideoFolderResponse] = Field(default_factory=list)
     preferences: VideoLibraryPreferencesResponse = Field(default_factory=VideoLibraryPreferencesResponse)
     collections: list[VideoCollectionResponse] = Field(default_factory=list)
+    # 分页/筛选元数据：移动端分页后没法从 videos 推导总数与平台列表，由服务端给
+    total: int = 0
+    has_more: bool = False
+    platforms: list[str] = Field(default_factory=list)
 
 
 class VideoCollectionSettingsRequest(BaseModel):
