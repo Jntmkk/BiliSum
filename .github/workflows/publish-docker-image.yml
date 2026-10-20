@@ -134,7 +134,8 @@ jobs:
           PRERELEASE: ${{ needs.resolve-tag.outputs.prerelease }}
           VARIANT: ${{ matrix.variant }}
           HUB_REPOSITORY: bbmike253/bilisum
-          # 推送到 GHCR 的仓库名(小写)。用 github.repository 自动取到 Jntmkk/BiliSum。
+          # 推送到 GHCR 的仓库名。ghcr 要求全小写；${{ github.repository }} 是
+          # "Jntmkk/Bilisum"（含大写），所以在 run 里用 tr 转小写拼成 ghcr.io/jntmkk/bilisum。
           GHCR_REPOSITORY: ghcr.io/${{ github.repository }}
         run: |
           set -euo pipefail
@@ -142,17 +143,19 @@ jobs:
           if [ "${VARIANT}" = "mini" ]; then
             suffix="-mini"
           fi
+          # ghcr 要求仓库名全小写（github.repository 是 "Jntmkk/BiliSum"）
+          ghcr_repo="$(printf '%s' "${GHCR_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           {
             echo "tags<<EOF"
             echo "${HUB_REPOSITORY}:${TAG}${suffix}"
             echo "${HUB_REPOSITORY}:${VERSION}${suffix}"
             # 国内服务器拉不到的 Docker Hub 时改从 ghcr.io 拉,所以同步推一份到 GHCR。
-            echo "${GHCR_REPOSITORY}:${TAG}${suffix}"
-            echo "${GHCR_REPOSITORY}:${VERSION}${suffix}"
+            echo "${ghcr_repo}:${TAG}${suffix}"
+            echo "${ghcr_repo}:${VERSION}${suffix}"
             if [ "${PRERELEASE}" != "true" ]; then
               # 稳定版更新 latest；预发布不覆盖稳定版镜像。
               echo "${HUB_REPOSITORY}:latest${suffix}"
-              echo "${GHCR_REPOSITORY}:latest${suffix}"
+              echo "${ghcr_repo}:latest${suffix}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
