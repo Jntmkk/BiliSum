@@ -23,6 +23,9 @@ on:
 
 permissions:
   contents: read
+  # 推送到 ghcr.io 需要写入 packages(GITHUB_TOKEN 自带,不用额外配凭据)。
+  # 国内服务器访问 Docker Hub 受限,改从 ghcr.io 拉镜像,所以这里要加推一份到 ghcr。
+  packages: write
 
 jobs:
   resolve-tag:
@@ -113,6 +116,16 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME || 'bbmike253' }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 国内服务器访问 Docker Hub 受限(加速器只代理官方库、daocloud 有白名单),
+      # 所以同时推一份到 ghcr.io。GITHUB_TOKEN 自带凭据,无需额外配置,
+      # 且 ghcr.io 国内可正常拉取(实测 ~97s 拉取完整镜像)。
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Compose Docker tags
         id: tags
         env:
@@ -121,6 +134,8 @@ jobs:
           PRERELEASE: ${{ needs.resolve-tag.outputs.prerelease }}
           VARIANT: ${{ matrix.variant }}
           HUB_REPOSITORY: bbmike253/bilisum
+          # 推送到 GHCR 的仓库名(小写)。用 github.repository 自动取到 Jntmkk/BiliSum。
+          GHCR_REPOSITORY: ghcr.io/${{ github.repository }}
         run: |
           set -euo pipefail
           suffix=""
@@ -131,9 +146,13 @@ jobs:
             echo "tags<<EOF"
             echo "${HUB_REPOSITORY}:${TAG}${suffix}"
             echo "${HUB_REPOSITORY}:${VERSION}${suffix}"
+            # 国内服务器拉不到的 Docker Hub 时改从 ghcr.io 拉,所以同步推一份到 GHCR。
+            echo "${GHCR_REPOSITORY}:${TAG}${suffix}"
+            echo "${GHCR_REPOSITORY}:${VERSION}${suffix}"
             if [ "${PRERELEASE}" != "true" ]; then
               # 稳定版更新 latest；预发布不覆盖稳定版镜像。
               echo "${HUB_REPOSITORY}:latest${suffix}"
+              echo "${GHCR_REPOSITORY}:latest${suffix}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
