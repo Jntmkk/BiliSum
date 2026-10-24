@@ -332,9 +332,24 @@ class MySQLSession(DatabaseSession):
         self._query_connection = pymysql.connect(**options)
         self._lock = threading.RLock()
 
+    def _ensure_live(self, connection: Any) -> None:
+        """Reconnect a connection the server has dropped (e.g. wait_timeout).
+
+        pymysql's ping(reconnect=True) transparently re-establishes the
+        connection when it is no longer usable, so a long-idle process does
+        not fail every subsequent query with a stale handle.
+        """
+        try:
+            connection.ping(reconnect=True)
+        except Exception:
+            # ping raised (server unreachable): surface the original error to
+            # the caller instead of masking it with a reconnect failure.
+            pass
+
     @contextmanager
     def cursor(self) -> Iterator[Any]:
         with self._lock:
+            self._ensure_live(self._connection)
             raw = self._connection.cursor()
             try:
                 yield _Cursor(raw, self.dialect)
@@ -347,6 +362,7 @@ class MySQLSession(DatabaseSession):
 
     def execute(self, sql: str, params: Any = ()) -> list[Any]:
         with self._lock:
+            self._ensure_live(self._query_connection)
             raw = self._query_connection.cursor()
             try:
                 raw.execute(rewrite_sql(sql, self.dialect), params)
