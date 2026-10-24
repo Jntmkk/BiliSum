@@ -1,4 +1,7 @@
-import SegmentedControl from '@react-native-segmented-control/segmented-control';
+import SegmentedControl, {
+  type NativeSegmentedControlIOSChangeEvent,
+} from '@react-native-segmented-control/segmented-control';
+import type { NativeSyntheticEvent } from 'react-native';
 
 import { useColors } from '@/src/theme/colors';
 
@@ -11,6 +14,7 @@ interface Props<T extends string> {
 /**
  * 包一层真正的 UISegmentedControl。文字色只能通过 fontStyle /
  * activeFontStyle 传，没有独立的 textColor prop。
+ * 包一层函数组件是为了适配 RN 0.88 的函数组件类型（原包还是 class 组件声明）。
  */
 export function Segmented<T extends string>({ values, value, onChange }: Props<T>) {
   const colors = useColors();
@@ -23,7 +27,7 @@ export function Segmented<T extends string>({ values, value, onChange }: Props<T
     <SegmentedControl
       values={values.map((v) => v.label)}
       selectedIndex={index}
-      onChange={(e) => {
+      onChange={(e: NativeSyntheticEvent<NativeSegmentedControlIOSChangeEvent>) => {
         const next = values[e.nativeEvent.selectedSegmentIndex];
         if (next) onChange(next.key);
       }}

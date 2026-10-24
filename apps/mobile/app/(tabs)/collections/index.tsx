@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { FlatList, RefreshControl, View } from 'react-native';
+import { FlatList, RefreshControl, View, type ViewInstance } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -57,7 +57,7 @@ export default function CollectionsScreen() {
   const [sort, setSort] = useState<SortKey>('recent');
   const [open, setOpen] = useState<OpenMenu>(null);
   const [dropdownTop, setDropdownTop] = useState(0);
-  const rowRef = useRef<View>(null);
+  const rowRef = useRef<ViewInstance | null>(null);
 
   // UP 主选项由现有合集去重生成
   const owners = useMemo(() => {

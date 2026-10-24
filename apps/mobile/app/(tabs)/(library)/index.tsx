@@ -6,6 +6,7 @@ import {
   RefreshControl,
   TextInput,
   View,
+  type ViewInstance,
   useWindowDimensions,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -78,7 +79,7 @@ export default function LibraryScreen() {
 
   const [open, setOpen] = useState<OpenMenu>(null);
   const [dropdownTop, setDropdownTop] = useState(0);
-  const rowRef = useRef<View>(null);
+  const rowRef = useRef<ViewInstance | null>(null);
 
   // ---- 轮询：有处理中的视频时定期刷新 ----
   // 库接口只给状态不给百分比，进度要单独问 /tasks/{id}/progress。
@@ -326,7 +327,7 @@ export default function LibraryScreen() {
                 </Txt>
               )}
             </View>
-          ) : null
+          ) : undefined
         }
         ListEmptyComponent={
           showSkeleton ? (
