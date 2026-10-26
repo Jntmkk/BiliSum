@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { WebView, type WebViewRef } from 'react-native-webview';
 
 import { Icon } from '@/src/components/Icon';
 import { VideoCover } from '@/src/components/VideoCover';
@@ -47,7 +47,7 @@ export function VideoPlayer({
   onPlayingChange,
 }: Props) {
   const descriptor = useMemo(() => buildPlayerEmbedDescriptor(sourceUrl), [sourceUrl]);
-  const webRef = useRef<WebView>(null);
+  const webRef = useRef<WebViewRef | null>(null);
   const [loading, setLoading] = useState(true);
   /** WebView 的装载地址；null = 未挂载，显示封面 */
   const [src, setSrc] = useState<string | null>(null);

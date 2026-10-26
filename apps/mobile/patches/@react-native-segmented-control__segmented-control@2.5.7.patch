@@ -1,0 +1,26 @@
+diff --git a/index.d.ts b/index.d.ts
+index aa8d5f54d135e16952d630084571e872329dc26b..6f840a226a89ef28ddede752fee487ad1ea7cb7d 100644
+--- a/index.d.ts
++++ b/index.d.ts
+@@ -5,7 +5,7 @@ import * as React from 'react';
+ import {
+   ViewProps,
+   NativeSyntheticEvent,
+-  NativeMethods,
++  HostInstance,
+   TargetedEvent,
+   ViewStyle,
+ } from 'react-native';
+@@ -139,7 +139,8 @@ export interface SegmentedControlProps extends ViewProps {
+  * ````
+  */
+ 
+-declare class SegmentedControlComponent extends React.Component<SegmentedControlProps> {}
+-declare const SegmentedControlBase: Constructor<NativeMethods> &
+-  typeof SegmentedControlComponent;
+-export default class SegmentedControl extends SegmentedControlBase {}
++declare function SegmentedControlComponent(
++  props: SegmentedControlProps & { ref?: React.Ref<HostInstance> | undefined },
++): React.ReactNode;
++declare const SegmentedControlBase: typeof SegmentedControlComponent;
++export default SegmentedControlBase;

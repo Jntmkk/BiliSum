@@ -2,10 +2,11 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useMemo } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useColorScheme } from 'react-native';
 import 'react-native-reanimated';
 
+import * as Sentry from '@sentry/react-native';
 import { colorsFor, type Appearance } from '@/src/theme/colors';
-import { useColorScheme } from '@/components/useColorScheme';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -15,7 +16,16 @@ export const unstable_settings = {
 
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+// 崩溃监控：DSN 走 SENTRY_DSN 环境变量（EAS 构建时注入），
+// 本地开发未设置时 Sentry 自动 no-op，不会报错。
+Sentry.init({
+  enabled: !!process.env.SENTRY_DSN,
+  dsn: process.env.SENTRY_DSN,
+  debug: false,
+  tracesSampleRate: 0.2,
+});
+
+function RootLayout() {
   useEffect(() => {
     void SplashScreen.hideAsync();
   }, []);
@@ -26,6 +36,8 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+export default Sentry.wrap(RootLayout);
 
 function RootLayoutNav() {
   const scheme = useColorScheme();

@@ -1,1 +1,5 @@
+allowBuilds:
+  '@sentry/cli': true
 minimumReleaseAge: 0
+patchedDependencies:
+  '@react-native-segmented-control/segmented-control@2.5.7': patches/@react-native-segmented-control__segmented-control@2.5.7.patch
