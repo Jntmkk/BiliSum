@@ -37,7 +37,15 @@
       "expo-image",
       "expo-font",
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "bilisum-mobile",
+          "organization": "bilisum"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
