@@ -39,6 +39,9 @@
       "expo-status-bar",
       "expo-web-browser",
       [
+        "./plugins/withAndroidBuildFix.js"
+      ],
+      [
         "@sentry/react-native/expo",
         {
           "url": "https://sentry.io/",
