@@ -385,17 +385,17 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ inputs.release_tag || github.ref }}
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: apps/mobile/pnpm-lock.yaml
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - name: Install mobile dependencies
         working-directory: apps/mobile
