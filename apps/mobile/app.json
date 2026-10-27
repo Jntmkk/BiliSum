@@ -8,7 +8,8 @@
     "scheme": "bilisum",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bbmike253.bilisum-mobile"
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +18,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.bbmike253.bilisummobile"
     },
     "web": {
       "bundler": "metro",
@@ -38,6 +40,7 @@
       "expo-font",
       "expo-status-bar",
       "expo-web-browser",
+      "react-native-ota-hot-update",
       [
         "@sentry/react-native/expo",
         {
