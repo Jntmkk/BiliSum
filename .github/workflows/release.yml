@@ -414,13 +414,19 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           RELEASE_VERSION: ${{ needs.meta.outputs.release_version }}
         run: |
-          # --wait blocks until build finishes; CI timeout handles max wait
+          mkdir -p "$GITHUB_WORKSPACE/dist/release-assets-android"
+          # --wait blocks until build finishes; CI timeout is the safety net
           eas build --platform android --profile preview \
-            --non-interactive --wait --output apk \
-            --output-dir "$GITHUB_WORKSPACE/dist/release-assets-android"
+            --non-interactive --wait --json > build-result.json
+          BUILD_ID=$(jq -r '.[0].id // .id' build-result.json)
+          echo "EAS build ID: $BUILD_ID"
+          # Download the APK artifact
+          cd "$GITHUB_WORKSPACE/dist/release-assets-android"
+          eas build:download --build-id "$BUILD_ID" --non-interactive
           # Rename to release asset naming convention
-          APK=$(find "$GITHUB_WORKSPACE/dist/release-assets-android" -name "*.apk" | head -1)
-          mv "$APK" "$GITHUB_WORKSPACE/dist/release-assets-android/BiliSum-${RELEASE_VERSION}-android.apk"
+          APK=$(find . -name "*.apk" | head -1)
+          mv "$APK" "BiliSum-${RELEASE_VERSION}-android.apk"
+          ls -lh "BiliSum-${RELEASE_VERSION}-android.apk"
 
       - name: Upload Android release assets
         uses: actions/upload-artifact@v4
