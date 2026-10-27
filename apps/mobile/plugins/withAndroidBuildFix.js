@@ -42,16 +42,12 @@ const withAarMetadataFix = (config) =>
 // TODO: remove after android-37 platform is released
 // Expo SDK 58 AARs declare minCompileSdk=37 but android-37 is not released yet.
 // Disable the check task and pre-create output dirs for downstream BundleAar.
-allprojects {
-    tasks.matching { it.name.startsWith("check") && it.name.endsWith("AarMetadata") }.all {
-        it.enabled = false
-    }
-    tasks.matching { it.name.startsWith("bundle") && it.name.endsWith("Aar") }.all {
-        it.doFirst {
-            def checkTask = project.tasks.findByName(it.name.replace("bundle", "check").replace("Aar", "AarMetadata"))
-            if (checkTask) {
-                checkTask.outputs.files.files.each { f -> f.mkdirs() }
-            }
+gradle.projectsEvaluated {
+    rootProject.allprojects { proj ->
+        proj.tasks.matching { it.name.startsWith("check") && it.name.endsWith("AarMetadata") }.all { task ->
+            task.enabled = false
+            // Pre-create output dirs so BundleAar doesn't fail on missing inputs
+            task.outputs.files.files.each { f -> f.mkdirs() }
         }
     }
 }
