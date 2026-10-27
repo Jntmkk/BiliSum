@@ -410,15 +410,13 @@ jobs:
       - name: Build Android APK (EAS)
         working-directory: apps/mobile
         env:
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           RELEASE_VERSION: ${{ needs.meta.outputs.release_version }}
         run: |
           mkdir -p "$GITHUB_WORKSPACE/dist/release-assets-android"
           # --wait blocks until build finishes; CI timeout is the safety net
           eas build --platform android --profile preview \
-            --non-interactive --wait --json > build-result.json
-          BUILD_ID=$(jq -r '.[0].id // .id' build-result.json)
+            --non-interactive --wait --json > /tmp/eas-build-result.json
+          BUILD_ID=$(jq -r '.[0].id // .id' /tmp/eas-build-result.json)
           echo "EAS build ID: $BUILD_ID"
           # Download the APK artifact
           cd "$GITHUB_WORKSPACE/dist/release-assets-android"
