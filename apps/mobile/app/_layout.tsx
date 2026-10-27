@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 
 import * as Sentry from '@sentry/react-native';
 import { colorsFor, type Appearance } from '@/src/theme/colors';
+import { checkForHotUpdate } from '@/src/store/otaUpdate';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -28,6 +29,8 @@ Sentry.init({
 function RootLayout() {
   useEffect(() => {
     void SplashScreen.hideAsync();
+    // 启动后静默检查 OTA 热更新（不阻塞 UI）
+    void checkForHotUpdate();
   }, []);
 
   return (
