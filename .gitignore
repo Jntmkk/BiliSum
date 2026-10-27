@@ -36,3 +36,4 @@ null
 /.context/current/
 /.context/**/*.log
 /.context
+.playwright-mcp/
