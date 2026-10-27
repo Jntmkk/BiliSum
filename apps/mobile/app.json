@@ -42,6 +42,9 @@
       "expo-web-browser",
       "react-native-ota-hot-update",
       [
+        "./plugins/withAndroidBuildFix.js"
+      ],
+      [
         "@sentry/react-native/expo",
         {
           "url": "https://sentry.io/",
