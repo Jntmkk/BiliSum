@@ -401,30 +401,51 @@ jobs:
         working-directory: apps/mobile
         run: pnpm install --frozen-lockfile
 
-      - name: Set up Expo
-        uses: expo/expo-github-action@v8
+      - name: Set up JDK
+        uses: actions/setup-java@v4
         with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+          distribution: "temurin"
+          java-version: "21"
 
-      - name: Build Android APK (EAS)
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
+
+      - name: Install required SDK components
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;27.1.12297006" "cmake;3.22.1" 2>&1 | tail -5
+
+      - name: Prebuild Android project
         working-directory: apps/mobile
         env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        run: npx expo prebuild --platform android --clean
+
+      - name: Build Android APK (Gradle)
+        working-directory: apps/mobile/android
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
           RELEASE_VERSION: ${{ needs.meta.outputs.release_version }}
         run: |
+          # Download Gradle wrapper (avoids SSL issues with services.gradle.org)
+          GRADLE_VERSION="9.4.1"
+          GRADLE_DIR="$HOME/.gradle/wrapper/dists/gradle-${GRADLE_VERSION}-bin"
+          if [ ! -f "$GRADLE_DIR/gradle-${GRADLE_VERSION}/bin/gradle" ]; then
+            mkdir -p "$GRADLE_DIR"
+            curl -sL "https://mirrors.cloud.tencent.com/gradle/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d "$GRADLE_DIR"
+          fi
+          GRADLE="$GRADLE_DIR/gradle-${GRADLE_VERSION}/bin/gradle"
+          # Build only arm64 to save time
+          "$GRADLE" assembleDebug --console=plain -PreactNativeArchitectures=arm64-v8a
+          # Copy APK to release assets
           mkdir -p "$GITHUB_WORKSPACE/dist/release-assets-android"
-          # --wait blocks until build finishes; CI timeout is the safety net
-          eas build --platform android --profile preview \
-            --non-interactive --wait --json > /tmp/eas-build-result.json
-          BUILD_ID=$(jq -r '.[0].id // .id' /tmp/eas-build-result.json)
-          echo "EAS build ID: $BUILD_ID"
-          # Download the APK artifact
-          cd "$GITHUB_WORKSPACE/dist/release-assets-android"
-          eas build:download --build-id "$BUILD_ID" --non-interactive
-          # Rename to release asset naming convention
-          APK=$(find . -name "*.apk" | head -1)
-          mv "$APK" "BiliSum-${RELEASE_VERSION}-android.apk"
-          ls -lh "BiliSum-${RELEASE_VERSION}-android.apk"
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          cp "$APK" "$GITHUB_WORKSPACE/dist/release-assets-android/BiliSum-${RELEASE_VERSION}-android.apk"
+          ls -lh "$GITHUB_WORKSPACE/dist/release-assets-android/BiliSum-${RELEASE_VERSION}-android.apk"
 
       - name: Upload Android release assets
         uses: actions/upload-artifact@v4
