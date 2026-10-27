@@ -1,6 +1,6 @@
 name: Release
 
-# 构建 Windows / macOS 包并创建 GitHub Release。
+# 构建 Windows / macOS / Android 包并创建 GitHub Release。
 #
 # 触发方式：
 # - create-release-tag.yml 在「Release vX.Y.Z」PR 合并后打 tag，并通过
@@ -373,11 +373,68 @@ jobs:
             dist/release-assets-macos/latest-mac-*.yml
           if-no-files-found: error
 
+  build-android:
+    needs: meta
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release ref
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android APK (EAS)
+        working-directory: apps/mobile
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          RELEASE_VERSION: ${{ needs.meta.outputs.release_version }}
+        run: |
+          # --wait blocks until build finishes; CI timeout handles max wait
+          eas build --platform android --profile preview \
+            --non-interactive --wait --output apk \
+            --output-dir "$GITHUB_WORKSPACE/dist/release-assets-android"
+          # Rename to release asset naming convention
+          APK=$(find "$GITHUB_WORKSPACE/dist/release-assets-android" -name "*.apk" | head -1)
+          mv "$APK" "$GITHUB_WORKSPACE/dist/release-assets-android/BiliSum-${RELEASE_VERSION}-android.apk"
+
+      - name: Upload Android release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-android-${{ needs.meta.outputs.release_version }}
+          path: dist/release-assets-android/BiliSum-*.apk
+          if-no-files-found: error
+
   publish-release:
     needs:
       - meta
       - validate-windows-package
       - validate-macos-package
+      - build-android
     runs-on: ubuntu-latest
 
     steps:
@@ -405,6 +462,12 @@ jobs:
           pattern: release-assets-macos-*-${{ needs.meta.outputs.release_version }}
           path: dist/release-assets
           merge-multiple: true
+
+      - name: Download Android release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets-android-${{ needs.meta.outputs.release_version }}
+          path: dist/release-assets
 
       - name: Drop update feeds for prerelease
         if: ${{ needs.meta.outputs.prerelease == 'true' }}
@@ -518,6 +581,7 @@ jobs:
             dist/release-assets/BiliSum-*.dmg
             dist/release-assets/BiliSum-*.zip
             dist/release-assets/BiliSum-*.zip.blockmap
+            dist/release-assets/BiliSum-*-android.apk
             dist/release-assets/latest.yml
             dist/release-assets/latest-mac.yml
 
@@ -540,6 +604,7 @@ jobs:
       - meta
       - validate-windows-package
       - validate-macos-package
+      - build-android
       - publish-release
     if: always()
     runs-on: ubuntu-latest
