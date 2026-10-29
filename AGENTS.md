@@ -64,3 +64,29 @@ push 带 * 标记的提交到 master
 - 桌面端：`cd apps/desktop && npm run dev`（vite 热更新 + Electron）
 - 后端单测：`pytest tests/unit`；桌面端：`npm test` / `npm run typecheck`（apps/desktop 下）
 - Web 静态资源构建产物（`apps/web/static/assets/index-*`）随提交入库，桌面端 `npm run build:renderer` 会重建
+
+## 并行开发（Git Worktree）
+
+同一仓库多个分支并行开发时使用 worktree，每个 worktree 一个独立目录、一个独立 AI 会话：
+
+```
+~/bilisum                    → master 主目录
+~/bilisum-worktrees/
+  ├── dev                    → dev 分支
+  └── feat-new               → feat/new-feature 分支
+```
+
+常用命令：
+
+```bash
+git worktree list                                        # 查看现有 worktree
+git worktree add ~/bilisum-worktrees/xxx <branch>        # 检出已有分支
+git worktree add -b feat/xxx ~/bilisum-worktrees/xxx master  # 新分支
+git worktree remove ~/bilisum-worktrees/xxx              # 用完清理
+```
+
+注意：
+
+- 每个 worktree 的 `.venv`、`node_modules` 独立，需各自 `uv sync` / `npm install`
+- 分支合并回 master 后及时 `git worktree remove` 清理
+- worktree 目录不要嵌套在原仓库目录内
