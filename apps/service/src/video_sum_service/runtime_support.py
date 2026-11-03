@@ -2147,6 +2147,7 @@ def build_worker(
         "summary_chunk_retry_count": runtime_settings.summary_chunk_retry_count,
         "ytdlp_cookies_file": runtime_settings.ytdlp_cookies_file,
         "ytdlp_cookies_browser": runtime_settings.ytdlp_cookies_browser,
+        "ytdlp_proxy": runtime_settings.ytdlp_proxy,
     }
     supported_pipeline_fields = {field.name for field in fields(PipelineSettings)}
     pipeline_settings = PipelineSettings(
@@ -2301,6 +2302,8 @@ def serialize_settings(
         "summary_chunk_retry_count": current_settings.summary_chunk_retry_count,
         "ytdlp_cookies_file": current_settings.ytdlp_cookies_file,
         "ytdlp_cookies_browser": current_settings.ytdlp_cookies_browser,
+        "ytdlp_proxy": current_settings.ytdlp_proxy,
+        "executor_role": current_settings.executor_role,
         "up_dynamics_enabled": current_settings.up_dynamics_enabled,
         "up_dynamics_poll_interval_seconds": current_settings.up_dynamics_poll_interval_seconds,
         "oss_bucket": current_settings.oss_bucket,

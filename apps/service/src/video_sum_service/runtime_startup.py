@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from video_sum_core.models.tasks import TaskStatus
-from video_sum_infra.config import ServiceSettings
+from video_sum_infra.config import ServiceSettings, normalize_executor_role
 from video_sum_service.context import logger
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.runtime_support import build_worker, detect_environment, replace_task_worker
@@ -16,6 +16,23 @@ from video_sum_service.schemas import TaskRecord
 
 
 RuntimeRecover = Callable[[SqliteTaskRepository, Any], int]
+
+
+def executor_role_from_state(app_state: Any) -> str:
+    settings_manager = getattr(app_state, "settings_manager", None)
+    current = getattr(settings_manager, "current", None)
+    return normalize_executor_role(getattr(current, "executor_role", None))
+
+
+def is_llm_only_instance(app_state: Any) -> bool:
+    return executor_role_from_state(app_state) == "llm_only"
+
+
+def _llm_only_host_message() -> str:
+    return (
+        "本实例已设置为仅 LLM 节点：不执行下载、转写、思维导图、图文笔记和知识库索引，"
+        "这些工作会由集群中的完整节点完成。"
+    )
 
 
 def _now_iso() -> str:

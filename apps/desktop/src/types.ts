@@ -622,6 +622,7 @@ export type ServiceSettings = {
   summary_chunk_retry_count: number;
   ytdlp_cookies_file: string;
   ytdlp_cookies_browser: string;
+  ytdlp_proxy: string;
   up_dynamics_enabled: boolean;
   up_dynamics_poll_interval_seconds: number;
   oss_bucket: string;

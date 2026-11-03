@@ -137,6 +137,7 @@ Gemini 可通过 Google 的 OpenAI-compatible 端点使用：将 Provider 设为
 |------|------|------|
 | `VIDEO_SUM_YTDLP_COOKIES_FILE` | 空 | B 站 Cookies 文件（风控时用） |
 | `VIDEO_SUM_YTDLP_COOKIES_BROWSER` | 空 | 从浏览器读取 Cookies |
+| `VIDEO_SUM_YTDLP_PROXY` | 空 | yt-dlp 下载代理（海外服务器下载失败时用，如 `http://127.0.0.1:7890`） |
 | `VIDEO_SUM_TASK_CONCURRENCY` | `2` | 任务并发数 |
 | `VIDEO_SUM_OUTPUT_DIR` | 空 | 导出目录 |
 | `VIDEO_SUM_ENABLE_CACHE` | `true` | 缓存 |

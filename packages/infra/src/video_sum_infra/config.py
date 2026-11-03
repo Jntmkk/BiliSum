@@ -453,6 +453,13 @@ def normalize_transcription_provider(value: str | None, default: str = "siliconf
     return TRANSCRIPTION_PROVIDER_ALIASES.get(normalized, default)
 
 
+def normalize_executor_role(value: str | None, default: str = "full") -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"full", "llm_only"}:
+        return normalized
+    return default
+
+
 def normalize_knowledge_llm_mode(value: str | None, default: str = "same_as_main") -> str:
     normalized = str(value or "").strip().lower()
     if not normalized:
@@ -679,6 +686,10 @@ class ServiceSettings(BaseSettings):
     settings_schema_version: int = 2
     ytdlp_cookies_file: str = ""
     ytdlp_cookies_browser: str = ""
+    ytdlp_proxy: str = ""
+    # 多实例部署时本实例的执行角色：full=转写+下载+LLM；llm_only=只跑 LLM 摘要，
+    # 下载/转写/思维导图/图文笔记/知识库索引全部跳过（共享数据库的多实例部署用）。
+    executor_role: str = "full"
     # UP 主动态监控：默认关闭；轮询间隔钳制在 60-3600 秒。
     up_dynamics_enabled: bool = False
     up_dynamics_poll_interval_seconds: int = 600
@@ -712,6 +723,11 @@ class ServiceSettings(BaseSettings):
     @classmethod
     def _normalize_transcription_provider(cls, value: str | None) -> str:
         return normalize_transcription_provider(value)
+
+    @field_validator("executor_role", mode="before")
+    @classmethod
+    def _normalize_executor_role(cls, value: str | None) -> str:
+        return normalize_executor_role(value)
 
     @field_validator("knowledge_llm_mode", mode="before")
     @classmethod
