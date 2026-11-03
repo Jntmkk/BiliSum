@@ -128,6 +128,14 @@ def build_ydl_probe_options(*, extract_flat: bool = False) -> dict[str, object]:
             options["cookiefile"] = str(cookie_path)
         else:
             logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
+    proxy = str(
+        settings_manager.current.ytdlp_proxy
+        or os.environ.get("VIDEO_SUM_YTDLP_PROXY")
+        or os.environ.get("YTDLP_PROXY")
+        or ""
+    ).strip()
+    if proxy:
+        options["proxy"] = proxy
     if extract_flat:
         options["extract_flat"] = "in_playlist"
     return options

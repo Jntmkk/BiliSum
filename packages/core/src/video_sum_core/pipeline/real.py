@@ -347,6 +347,7 @@ class PipelineSettings:
     summary_chunk_retry_count: int = 5
     ytdlp_cookies_file: str = ""
     ytdlp_cookies_browser: str = ""
+    ytdlp_proxy: str = ""
 
 
 class RealPipelineRunner(PipelineRunner):
@@ -870,6 +871,14 @@ class RealPipelineRunner(PipelineRunner):
                 options["cookiefile"] = str(cookie_path)
             else:
                 logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
+        proxy = str(
+            self._settings.ytdlp_proxy
+            or os.environ.get("VIDEO_SUM_YTDLP_PROXY")
+            or os.environ.get("YTDLP_PROXY")
+            or ""
+        ).strip()
+        if proxy:
+            options["proxy"] = proxy
         return options
 
     def _raise_ydl_error(self, error: Exception) -> NoReturn:

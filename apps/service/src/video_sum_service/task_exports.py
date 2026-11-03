@@ -69,6 +69,7 @@ def export_task_markdown(
         enhanced_note_path,
         export_directory,
         export_path.name,
+        current_settings,
     )
     if enhanced_note_markdown.strip() and result.visual_note_status in {"ready", "partial"}:
         note_markdown = enhanced_note_markdown
@@ -88,7 +89,7 @@ def export_task_markdown(
         tags=tags,
         target=normalized_target,
         mindmap_path=result.mindmap_artifact_path or result.artifacts.get("mindmap_path"),
-        transcript_text=_resolve_transcript_text(result),
+        transcript_text=_resolve_transcript_text(result, current_settings),
         include_transcript=include_transcript,
     )
     _write_markdown_export_at(export_path, markdown)
@@ -127,7 +128,7 @@ def export_task_transcript(
     if record.status != TaskStatus.COMPLETED or record.result is None:
         raise HTTPException(status_code=400, detail="仅已完成且有结果的任务可以导出转写文本。")
 
-    transcript = _resolve_transcript_text(record.result)
+    transcript = _resolve_transcript_text(record.result, current_settings)
     if not transcript:
         raise HTTPException(status_code=400, detail="当前任务缺少转写全文，暂时无法导出 transcript。")
 
@@ -171,15 +172,20 @@ def build_transcript_export_filename(title: str, export_time: datetime) -> str:
     return build_export_filename(f"{title} transcript", export_time).removesuffix(".md") + ".txt"
 
 
-def _resolve_transcript_text(result) -> str:
+def _resolve_transcript_text(result, current_settings: ServiceSettings | None = None) -> str:
     transcript = str(getattr(result, "transcript_text", "") or "").strip()
     if transcript:
         return transcript
     transcript_path = str(getattr(result, "artifacts", {}).get("transcript_path") or "").strip()
     if not transcript_path:
         return ""
+    path = Path(transcript_path)
+    if current_settings is not None:
+        from video_sum_service import artifact_store
+
+        path = artifact_store.ensure_artifact_file(current_settings, path)
     try:
-        return Path(transcript_path).read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
 
@@ -192,10 +198,15 @@ def _prepare_visual_note_for_export(
     visual_note_path: str | None,
     export_directory: Path,
     preferred_file_name: str,
+    current_settings: ServiceSettings | None = None,
 ) -> tuple[str, list[Path]]:
     if not visual_note_path:
         return "", []
     note_path = Path(visual_note_path)
+    if current_settings is not None:
+        from video_sum_service import artifact_store
+
+        note_path = artifact_store.ensure_artifact_file(current_settings, note_path)
     try:
         note_markdown = note_path.read_text(encoding="utf-8").strip()
     except OSError:

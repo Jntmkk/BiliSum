@@ -16,6 +16,7 @@ from video_sum_core.models.tasks import (
 )
 from video_sum_core.pipeline.base import PipelineContext, PipelineRunner, PipelineTranscription
 from video_sum_infra.config import ServiceSettings, normalize_visual_note_mode
+from video_sum_service import artifact_store
 from video_sum_service.offpeak import is_peak_now
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import TaskRecord
@@ -644,6 +645,7 @@ class TaskWorker:
             message="任务已完成",
             payload={"completed_at": datetime.now(timezone.utc).isoformat()},
         )
+        artifact_store.upload_task_artifacts(self._knowledge_index_settings, task_id)
         logger.info(
             "task completed task_id=%s key_points=%d timeline=%d transcript_chars=%d",
             task_id,
@@ -1132,6 +1134,7 @@ class TaskWorker:
                     "warnings": context.get("warnings", []),
                 },
             )
+            artifact_store.upload_task_artifacts(self._knowledge_index_settings, task_id)
         except Exception as exc:
             logger.exception("visual evidence generation failed task_id=%s error=%s", task_id, exc)
             failed_record = self._repository.update_result(

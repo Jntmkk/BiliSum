@@ -52,6 +52,7 @@ from video_sum_service.runtime_support import (
 from video_sum_service.runtime_startup import (
     get_runtime_startup_state,
     initialize_runtime_startup_state,
+    is_llm_only_instance,
     mark_runtime_worker_ready,
     request_runtime_startup_shutdown,
     start_runtime_startup,
@@ -117,8 +118,12 @@ async def lifespan(app: FastAPI):
     app.state.task_repository = repository
     app.state.db_session = session
     app.state.settings_manager = settings_manager
+    llm_only_instance = is_llm_only_instance(app.state)
+    if llm_only_instance:
+        logger.info("executor role is llm_only: knowledge index coordinator disabled on this instance")
     knowledge_job_coordinator = KnowledgeJobCoordinator(repository, current_settings)
-    knowledge_job_coordinator.start()
+    if not llm_only_instance:
+        knowledge_job_coordinator.start()
     app.state.knowledge_job_coordinator = knowledge_job_coordinator
     up_dynamics_watcher = UpDynamicsWatcher(repository, app.state)
     up_dynamics_watcher.start()
@@ -161,6 +166,40 @@ app.include_router(videos_router)
 app.include_router(tasks_router)
 app.include_router(knowledge_router)
 app.include_router(dynamics_router)
+
+
+@app.get("/media-shared/{relative_path:path}")
+def media_shared_fallback(relative_path: str):
+    """Serve /media misses from the shared artifact store (multi-instance).
+
+    The /media mount above only sees this instance's local cache dir.
+    Files produced by another instance are downloaded from OSS (when
+    configured) and cached locally for subsequent requests.
+    """
+    from video_sum_service import artifact_store
+
+    candidate = (CACHE_STATIC_DIR / relative_path).resolve()
+    try:
+        if not (candidate.is_relative_to(CACHE_STATIC_DIR.resolve()) and candidate.is_file()):
+            raise HTTPException(status_code=404, detail="Not found.")
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=404, detail="Not found.")
+    resolved = artifact_store.ensure_artifact_file(settings_manager.current, candidate)
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Not found.")
+    return FileResponse(resolved, media_type=artifact_store.guess_media_type(resolved))
+
+
+@app.middleware("http")
+async def rewrite_media_to_shared_store(request, call_next):
+    """When OSS artifact sharing is configured, rewrite /media/ URLs so the
+    browser hits /media-shared/ — files produced by another instance are
+    fetched from OSS instead of 404ing on the local static mount."""
+    from video_sum_service import artifact_store
+
+    if request.url.path.startswith("/media/") and artifact_store.oss_share_available(settings_manager.current):
+        request.scope["path"] = "/media-shared/" + request.url.path[len("/media/"):]
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -556,6 +595,29 @@ def generate_task_visual_evidence(task_id: str, force: bool = False, mode: str |
         }
     )
     task_store.save_result(task_id, generating_result)
+    if is_llm_only_instance(app.state):
+        reverted_result = record.result.model_copy(
+            update={
+                "visual_note_status": "idle",
+                "visual_note_error_message": None,
+            }
+        )
+        task_store.save_result(task_id, reverted_result)
+        task_store.append_event(
+            task_id,
+            stage="visual_external",
+            progress=100,
+            message="本实例已设置为仅 LLM 节点，图文笔记由完整执行节点生成。",
+            payload={"executor_role": "llm_only"},
+        )
+        return TaskVisualEvidenceResponse(
+            task_id=task_id,
+            mode=requested_mode,
+            status="idle",
+            error_message=None,
+            updated_at=reverted_result.visual_note_updated_at,
+            frame_count=reverted_result.visual_frame_count,
+        )
     worker = getattr(app.state, "task_worker", None)
     if worker is None or not hasattr(worker, "submit_visual_evidence"):
         raise HTTPException(status_code=503, detail="图文笔记后台队列暂不可用。")

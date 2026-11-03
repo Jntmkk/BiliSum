@@ -642,6 +642,52 @@ def test_run_from_url_rejects_unsupported_url(tmp_path: Path) -> None:
         )
 
 
+def test_probe_video_uses_ytdlp_proxy_option(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured_options: dict[str, object] = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            return {"title": "测试视频"}
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.YoutubeDL", FakeYoutubeDL)
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, ytdlp_proxy="http://127.0.0.1:7890"))
+
+    runner._probe_video("https://www.bilibili.com/video/BV1xx411c7mD")
+    assert captured_options["proxy"] == "http://127.0.0.1:7890"
+
+
+def test_probe_video_omits_proxy_when_unset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured_options: dict[str, object] = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            return {"title": "测试视频"}
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.YoutubeDL", FakeYoutubeDL)
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path))
+
+    runner._probe_video("https://www.bilibili.com/video/BV1xx411c7mD")
+    assert "proxy" not in captured_options
+
+
 def test_probe_video_uses_cookies_file_and_browser_headers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cookie_file = tmp_path / "cookies.txt"
     cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")

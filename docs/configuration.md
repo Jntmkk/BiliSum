@@ -137,10 +137,28 @@ Gemini 可通过 Google 的 OpenAI-compatible 端点使用：将 Provider 设为
 |------|------|------|
 | `VIDEO_SUM_YTDLP_COOKIES_FILE` | 空 | B 站 Cookies 文件（风控时用） |
 | `VIDEO_SUM_YTDLP_COOKIES_BROWSER` | 空 | 从浏览器读取 Cookies |
+| `VIDEO_SUM_YTDLP_PROXY` | 空 | yt-dlp 下载代理（海外服务器下载失败时用，如 `http://127.0.0.1:7890`） |
+| `VIDEO_SUM_EXECUTOR_ROLE` | `full` | 执行节点角色：`full`=下载+转写+LLM；`llm_only`=仅 LLM（多实例共享数据库时，海外实例设为 `llm_only`，下载转写交给国内完整节点） |
 | `VIDEO_SUM_TASK_CONCURRENCY` | `2` | 任务并发数 |
 | `VIDEO_SUM_OUTPUT_DIR` | 空 | 导出目录 |
 | `VIDEO_SUM_ENABLE_CACHE` | `true` | 缓存 |
 | `VIDEO_SUM_PRESERVE_TEMP_AUDIO` | `false` | 保留临时音频 |
+
+## 多实例部署（共享数据库）
+
+多个实例连接同一个 MySQL 库时，用 `VIDEO_SUM_EXECUTOR_ROLE` 分工：国内实例保持
+`full`（下载、转写、思维导图、图文笔记、知识库索引都在本地执行）；海外实例设为
+`llm_only`，只保留 Web/API 与 LLM 摘要队列，重任务交给完整节点执行。
+
+任务产物（转写、摘要、知识笔记、思维导图、图文笔记、封面缓存）默认落在实例本地
+磁盘，跨实例不可见。配置 OSS（复用 `VIDEO_SUM_OSS_*` 一组变量）后：
+
+- 完整节点在任务/图文笔记完成时自动把产物上传到 OSS（`artifact-store/` 前缀）
+- 任一实例读取产物时本地优先，缺失时从 OSS 拉回落盘
+- `/media/` 下的静态文件在配置 OSS 后自动改走共享路由，浏览器可直接打开
+
+注意：音频、视频源文件等大文件不参与共享；用户导出到 `VIDEO_SUM_OUTPUT_DIR`
+的文件仍写在触发导出的实例本地。
 
 ## CLI 相关配置
 
