@@ -167,6 +167,9 @@ def cache_cover_image(source_url: str, canonical_id: str, referer_url: str | Non
             response = client.get(normalized_source)
             response.raise_for_status()
         target.write_bytes(response.content)
+        from video_sum_service import artifact_store
+
+        artifact_store.upload_cache_file(settings_manager.current, target, "covers")
         return f"/media/covers/{target.name}"
     except Exception:
         return normalized_source

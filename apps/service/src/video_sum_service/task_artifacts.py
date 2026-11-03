@@ -99,6 +99,12 @@ def load_task_segments(summary_path: str) -> list[dict[str, object]]:
 
 def load_task_mindmap(mindmap_path: str) -> TaskMindMap:
     try:
+        from video_sum_service import artifact_store
+        from video_sum_service.context import settings_manager
+
+        mindmap_path = str(
+            artifact_store.ensure_artifact_file(settings_manager.current, Path(mindmap_path))
+        )
         payload = json.loads(Path(mindmap_path).read_text(encoding="utf-8"))
         return TaskMindMap.model_validate(payload)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -119,6 +125,12 @@ def load_visual_note_markdown(visual_note_path: str | None) -> str:
     if not visual_note_path:
         return ""
     try:
+        from video_sum_service import artifact_store
+        from video_sum_service.context import settings_manager
+
+        visual_note_path = str(
+            artifact_store.ensure_artifact_file(settings_manager.current, Path(visual_note_path))
+        )
         return Path(visual_note_path).read_text(encoding="utf-8").strip()
     except OSError:
         return ""

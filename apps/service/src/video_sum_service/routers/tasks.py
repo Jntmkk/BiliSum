@@ -1,8 +1,9 @@
 import asyncio
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from video_sum_core.models.tasks import InputType, TaskStatus
 from video_sum_core.utils import normalize_video_url
@@ -230,6 +231,10 @@ def get_task_visual_evidence(task_id: str, request: Request) -> TaskVisualEviden
         return TaskVisualEvidenceResponse(task_id=task_id, status="idle")
 
     context_path = result.artifacts.get("visual_context_path")
+    if context_path:
+        from video_sum_service import artifact_store
+
+        context_path = str(artifact_store.ensure_artifact_file(settings_manager.current, Path(context_path)))
     context = load_visual_context(context_path) if context_path else None
     note_path = result.visual_enhanced_note_artifact_path or result.visual_note_artifact_path or result.artifacts.get("visual_enhanced_note_path") or result.artifacts.get("visual_note_path")
     return TaskVisualEvidenceResponse(
@@ -306,12 +311,20 @@ def get_task_visual_evidence_media(task_id: str, file_name: str, request: Reques
     target = resolve_visual_media_path(record.result, task_id, settings_manager.current.tasks_dir, safe_name)
     if target is None:
         raise HTTPException(status_code=404, detail="Visual evidence media not found.")
+    from video_sum_service import artifact_store
+
+    target = artifact_store.ensure_artifact_file(settings_manager.current, target)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Visual evidence media not found.")
     media_type = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
         ".webp": "image/webp",
     }.get(target.suffix.lower(), "application/octet-stream")
+    shared_url = artifact_store.artifact_media_url(settings_manager.current, target)
+    if shared_url:
+        return RedirectResponse(shared_url)
     return FileResponse(target, media_type=media_type, filename=target.name)
 
 

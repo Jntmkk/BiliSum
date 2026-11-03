@@ -168,6 +168,40 @@ app.include_router(knowledge_router)
 app.include_router(dynamics_router)
 
 
+@app.get("/media-shared/{relative_path:path}")
+def media_shared_fallback(relative_path: str):
+    """Serve /media misses from the shared artifact store (multi-instance).
+
+    The /media mount above only sees this instance's local cache dir.
+    Files produced by another instance are downloaded from OSS (when
+    configured) and cached locally for subsequent requests.
+    """
+    from video_sum_service import artifact_store
+
+    candidate = (CACHE_STATIC_DIR / relative_path).resolve()
+    try:
+        if not (candidate.is_relative_to(CACHE_STATIC_DIR.resolve()) and candidate.is_file()):
+            raise HTTPException(status_code=404, detail="Not found.")
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=404, detail="Not found.")
+    resolved = artifact_store.ensure_artifact_file(settings_manager.current, candidate)
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Not found.")
+    return FileResponse(resolved, media_type=artifact_store.guess_media_type(resolved))
+
+
+@app.middleware("http")
+async def rewrite_media_to_shared_store(request, call_next):
+    """When OSS artifact sharing is configured, rewrite /media/ URLs so the
+    browser hits /media-shared/ — files produced by another instance are
+    fetched from OSS instead of 404ing on the local static mount."""
+    from video_sum_service import artifact_store
+
+    if request.url.path.startswith("/media/") and artifact_store.oss_share_available(settings_manager.current):
+        request.scope["path"] = "/media-shared/" + request.url.path[len("/media/"):]
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def touch_cli_activity(request, call_next):
     if cli_idle.enabled():
