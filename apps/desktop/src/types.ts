@@ -623,6 +623,7 @@ export type ServiceSettings = {
   ytdlp_cookies_file: string;
   ytdlp_cookies_browser: string;
   ytdlp_proxy: string;
+  executor_role: string;
   up_dynamics_enabled: boolean;
   up_dynamics_poll_interval_seconds: number;
   oss_bucket: string;

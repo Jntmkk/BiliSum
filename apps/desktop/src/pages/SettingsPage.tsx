@@ -233,6 +233,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "video", targetKey: "enable_cache", title: "启用缓存", description: "控制任务缓存行为。", keywords: ["缓存", "cache"] },
   { category: "video", targetKey: "ytdlp_cookies_file", title: "yt-dlp Cookies 文件", description: "配置 B 站登录态 cookies.txt。", keywords: ["cookie", "cookies", "b站", "登录", "风控", "412"] },
   { category: "video", targetKey: "ytdlp_proxy", title: "yt-dlp 下载代理", description: "海外服务器下载 B 站视频失败时配置下载代理。", keywords: ["代理", "proxy", "下载失败", "海外", "服务器", "下载"] },
+  { category: "video", targetKey: "executor_role", title: "执行节点角色", description: "多实例部署时选择本实例是否执行下载与转写。", keywords: ["节点", "实例", "llm_only", "角色", "调度", "多实例"] },
   { category: "runtime", targetKey: "runtime_status", title: "运行环境状态", description: "检查 Python、Torch、CUDA 与扩展依赖。", keywords: ["运行环境", "环境", "torch", "python", "cuda"] },
   { category: "runtime", targetKey: "local_asr_runtime", title: "本地 ASR 运行环境", description: "安装或检查本地 ASR 依赖。", keywords: ["本地", "asr", "whisper", "安装"] },
   { category: "runtime", targetKey: "funasr_runtime", title: "FunASR 运行环境", description: "安装或检查 FunASR 依赖（中文效果优于 Whisper）。", keywords: ["funasr", "qwen", "asr", "安装", "中文"] },
@@ -2819,6 +2820,14 @@ export function SettingsPage({
                     placeholder="http://127.0.0.1:7890"
                   />
                   <span className="settings-input-caption">留空则不使用代理。服务器部署在海外、B 站视频下载失败时，填写可用的 HTTP/SOCKS5 代理（yt-dlp 会自动识别环境变量中的 HTTP_PROXY/HTTPS_PROXY）。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("executor_role") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">执行节点角色</span>
+                  <select className="settings-select-field" value={form.executor_role || "full"} onChange={(e) => updateForm({ ...form, executor_role: e.target.value })}>
+                    <option value="full">完整节点（下载 + 转写 + LLM）</option>
+                    <option value="llm_only">仅 LLM 节点（不下载、不转写）</option>
+                  </select>
+                  <span className="settings-input-caption">多实例共享同一数据库时使用：海外/弱网实例设为「仅 LLM 节点」，下载转写交给国内完整节点；单实例部署保持「完整节点」。</span>
                 </label>
                 <label className="settings-input-group" ref={registerFocusTarget("enable_cache") as (node: HTMLLabelElement | null) => void}>
                   <span className="settings-input-label">启用下载缓存</span>

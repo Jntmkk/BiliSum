@@ -52,6 +52,7 @@ from video_sum_service.runtime_support import (
 from video_sum_service.runtime_startup import (
     get_runtime_startup_state,
     initialize_runtime_startup_state,
+    is_llm_only_instance,
     mark_runtime_worker_ready,
     request_runtime_startup_shutdown,
     start_runtime_startup,
@@ -117,8 +118,12 @@ async def lifespan(app: FastAPI):
     app.state.task_repository = repository
     app.state.db_session = session
     app.state.settings_manager = settings_manager
+    llm_only_instance = is_llm_only_instance(app.state)
+    if llm_only_instance:
+        logger.info("executor role is llm_only: knowledge index coordinator disabled on this instance")
     knowledge_job_coordinator = KnowledgeJobCoordinator(repository, current_settings)
-    knowledge_job_coordinator.start()
+    if not llm_only_instance:
+        knowledge_job_coordinator.start()
     app.state.knowledge_job_coordinator = knowledge_job_coordinator
     up_dynamics_watcher = UpDynamicsWatcher(repository, app.state)
     up_dynamics_watcher.start()
@@ -556,6 +561,29 @@ def generate_task_visual_evidence(task_id: str, force: bool = False, mode: str |
         }
     )
     task_store.save_result(task_id, generating_result)
+    if is_llm_only_instance(app.state):
+        reverted_result = record.result.model_copy(
+            update={
+                "visual_note_status": "idle",
+                "visual_note_error_message": None,
+            }
+        )
+        task_store.save_result(task_id, reverted_result)
+        task_store.append_event(
+            task_id,
+            stage="visual_external",
+            progress=100,
+            message="本实例已设置为仅 LLM 节点，图文笔记由完整执行节点生成。",
+            payload={"executor_role": "llm_only"},
+        )
+        return TaskVisualEvidenceResponse(
+            task_id=task_id,
+            mode=requested_mode,
+            status="idle",
+            error_message=None,
+            updated_at=reverted_result.visual_note_updated_at,
+            frame_count=reverted_result.visual_frame_count,
+        )
     worker = getattr(app.state, "task_worker", None)
     if worker is None or not hasattr(worker, "submit_visual_evidence"):
         raise HTTPException(status_code=503, detail="图文笔记后台队列暂不可用。")
