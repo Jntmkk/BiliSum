@@ -34,6 +34,8 @@ _BILIBILI_HTTP_HEADERS = {
     ),
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Referer": "https://www.bilibili.com/",
+    # 备份 CDN（腾讯云 EdgeOne 防护）对不带 Range 头的请求返回 567（yt-dlp#17847）
+    "Range": "bytes=0-",
 }
 LOCAL_VIDEO_SUFFIXES = {
     ".mp4",

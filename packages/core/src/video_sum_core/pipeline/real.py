@@ -83,6 +83,10 @@ _BILIBILI_HTTP_HEADERS = {
     ),
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Referer": "https://www.bilibili.com/",
+    # B 站备份 CDN（upos-sz-mirrorcosov 等 *.bilivideo.com，腾讯云 EdgeOne
+    # 防护）对不带 Range 头的请求直接返回 567（yt-dlp#17847）。主站 CDN
+    # （akamaized.net）不受影响，显式 Range 后两者都正常。
+    "Range": "bytes=0-",
 }
 
 _MIN_MINDMAP_TOP_LEVEL_BRANCHES = 3
@@ -853,9 +857,9 @@ class RealPipelineRunner(PipelineRunner):
             "quiet": True,
             "no_warnings": True,
             "http_headers": _BILIBILI_HTTP_HEADERS,
-            "retries": 3,
+            "retries": 10,
             "extractor_retries": 3,
-            "fragment_retries": 3,
+            "fragment_retries": 10,
             "sleep_interval_requests": 1,
             "socket_timeout": 30,
         }
