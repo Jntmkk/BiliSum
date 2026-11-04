@@ -127,10 +127,97 @@ def load_bilibili_cookie_header() -> str | None:
             parts.append(f"{name}={value}")
         if not has_sessdata:
             return None
-        return cookie_header_with_fingerprint("; ".join(parts)) if parts else None
+        return cookie_header_with_ticket(cookie_header_with_fingerprint("; ".join(parts))) if parts else None
     except OSError as exc:
         logger.warning("failed to read bilibili cookie file: %s", exc)
         return None
+
+
+BILIBILI_TICKET_URL = "https://api.bilibili.com/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket"
+# HMAC 密钥（取自 bilibili-API-collect 文档，公开算法）
+_TICKET_HMAC_KEY = b"XgwSnGZ1p"
+_TICKET_TTL_SECONDS = 3 * 24 * 60 * 60
+_ticket_lock = threading.Lock()
+_ticket_cache: tuple[float, str] | None = None
+
+
+def _extract_cookie_value(cookie_header: str, name: str) -> str:
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if part.startswith(f"{name}="):
+            return part.split("=", 1)[1]
+    return ""
+
+
+def _fetch_bili_ticket(cookie_header: str) -> str:
+    """按 bilibili-API-collect 文档领取 bili_ticket（降低风控概率的 JWT）。
+
+    算法：hmac_sha256(密钥 XgwSnGZ1p, 消息 "ts"+timestamp) 得 hexsign，
+    POST 到 GenWebTicket（key_id=ec02，csrf 取 cookie 里的 bili_jct）。
+    注意 context[ts] 必须以查询参数发送——表单编码会被服务端拒绝（-400）。
+    """
+    import hmac as hmac_mod
+
+    timestamp = str(int(time.time()))
+    hexsign = hmac_mod.new(
+        _TICKET_HMAC_KEY, ("ts" + timestamp).encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    csrf = _extract_cookie_value(cookie_header, "bili_jct")
+    params = urllib.parse.urlencode(
+        {"key_id": "ec02", "hexsign": hexsign, "context[ts]": timestamp, "csrf": csrf}
+    )
+    headers = {
+        **BILIBILI_BROWSER_HEADERS,
+        "Cookie": cookie_header,
+    }
+    with httpx.Client(timeout=10, follow_redirects=True, headers=headers) as client:
+        response = client.post(f"{BILIBILI_TICKET_URL}?{params}")
+        response.raise_for_status()
+        payload = response.json()
+    if not isinstance(payload, dict) or payload.get("code") != 0:
+        raise UpstreamError(f"bili_ticket 接口返回 code={payload.get('code')}")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise UpstreamError("bili_ticket 接口响应缺少 data")
+    ticket = str(data.get("ticket") or "").strip()
+    if not ticket:
+        raise UpstreamError("bili_ticket 接口未返回 ticket")
+    return ticket
+
+
+def _bili_ticket_cookie(cookie_header: str) -> tuple[str, str] | None:
+    """取 bili_ticket cookie（带 3 天进程缓存）；失败返回 None 不抛错。"""
+    global _ticket_cache
+    now = time.monotonic()
+    with _ticket_lock:
+        cached = _ticket_cache
+        if cached is not None and (now - cached[0]) < (_TICKET_TTL_SECONDS - 3600):
+            return "bili_ticket", cached[1]
+    try:
+        ticket = _fetch_bili_ticket(cookie_header)
+    except (httpx.HTTPError, ValueError, UpstreamError) as exc:
+        logger.warning("failed to obtain bili_ticket: %s", exc)
+        return None
+    with _ticket_lock:
+        _ticket_cache = (now, ticket)
+    return "bili_ticket", ticket
+
+
+def cookie_header_with_ticket(cookie_header: str) -> str:
+    """在 cookie 头里补齐 bili_ticket；缺失/失败时原样返回。"""
+    if "bili_ticket=" in cookie_header:
+        return cookie_header
+    ticket_pair = _bili_ticket_cookie(cookie_header)
+    if ticket_pair is None:
+        return cookie_header
+    name, value = ticket_pair
+    return f"{cookie_header}; {name}={value}" if cookie_header else f"{name}={value}"
+
+
+def reset_ticket_cache_for_tests() -> None:
+    global _ticket_cache
+    with _ticket_lock:
+        _ticket_cache = None
 
 
 _FINGERPRINT_TTL_SECONDS = 12 * 60 * 60
