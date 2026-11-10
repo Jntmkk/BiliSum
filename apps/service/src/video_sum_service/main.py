@@ -30,7 +30,7 @@ def run() -> None:
     ensure_directory(settings.cache_dir)
     ensure_directory(settings.tasks_dir)
     uvicorn_run(
-        app,
+        "video_sum_service.app:app",
         host=settings.host,
         port=settings.port,
         workers=workers,
