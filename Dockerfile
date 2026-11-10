@@ -19,6 +19,7 @@ ENV PATH=/opt/ffmpeg/bin:${PATH} \
     VIDEO_SUM_DOCKER=1 \
     VIDEO_SUM_HOST=0.0.0.0 \
     VIDEO_SUM_PORT=3838 \
+    VIDEO_SUM_WORKERS=1 \
     VIDEO_SUM_APP_DATA_ROOT=/data \
     VIDEO_SUM_DATA_DIR=/data \
     VIDEO_SUM_CACHE_DIR=/data/cache \

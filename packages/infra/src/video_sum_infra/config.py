@@ -575,6 +575,7 @@ def normalize_knowledge_index_auto_rebuild(value: str | None) -> str:
 class ServiceSettings(BaseSettings):
     host: str = Field(default_factory=default_host)
     port: int = 3838
+    workers: int = Field(default=1, ge=1, le=8)
     data_dir: Path = Field(default_factory=default_data_dir)
     cache_dir: Path = Field(default_factory=default_cache_dir)
     tasks_dir: Path = Field(default_factory=default_tasks_dir)
