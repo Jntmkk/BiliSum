@@ -662,6 +662,7 @@ def get_video_library(
         include_hidden=include_collection_videos,
         limit=limit,
         offset=offset,
+        include_result_json=False,
     )
     return VideoLibraryResponse(
         videos=[localize_video_cover(task_store, video).to_summary() for video in videos],

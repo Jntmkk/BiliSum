@@ -1056,31 +1056,65 @@ def probe_video_asset(
     )
 
 
-def localize_video_cover(task_store: SqliteTaskRepository, video: VideoAssetRecord) -> VideoAssetRecord:
-    cover_file_missing = (
-        bool(video.cover_url)
-        and video.cover_url.startswith("/media/")
-        and not (COVER_CACHE_DIR / video.cover_url.rsplit("/", 1)[-1]).exists()
-    )
-    if (not video.cover_url or cover_file_missing) and str(video.platform or "").lower() == "bilibili":
-        probe_url = video.source_url or f"https://www.bilibili.com/video/{str(video.canonical_id).split('?', 1)[0]}"
-        try:
-            refreshed, _pages, _requires_selection = probe_video_asset(probe_url, force_refresh=True)
-        except Exception:
-            logger.warning("failed to refresh missing bilibili cover: %s", video.video_id, exc_info=True)
+def localize_video_cover(
+    task_store: SqliteTaskRepository,
+    video: VideoAssetRecord,
+    *,
+    force_refresh: bool = False,
+) -> VideoAssetRecord:
+    """Cache the cover URL locally, skipping network calls unless *force_refresh*.
+
+    Previously this function eagerly called ``probe_video_asset`` which
+    triggered a full yt-dlp round-trip for every missing cover.  On a library
+    of 600+ videos that meant 600+ concurrent HTTP requests and CPU
+    saturation.  The new behaviour is:
+
+    1. If the cover is already cached (or the video has no remote cover),
+       return immediately — **zero network I/O**.
+    2. If the cover is a remote URL, download it once and cache to disk.
+    3. Only when *force_refresh* is True (e.g. user explicitly refreshes)
+       do we re-probe the source platform.
+    """
+    if not force_refresh:
+        # Fast path: nothing to do, return as-is.
+        if not video.cover_url:
             return video
-        merged = merge_video_asset_metadata(video, refreshed)
-        if merged.cover_url and not merged.cover_url.startswith("/media/"):
-            localized = cache_cover_image(merged.cover_url, merged.canonical_id, referer_url=merged.source_url)
-            if localized != merged.cover_url:
-                merged = merged.model_copy(update={"cover_url": localized})
-        if merged.cover_url:
-            return task_store.upsert_video_asset(merged)
+        if video.cover_url.startswith("/media/"):
+            cover_file = COVER_CACHE_DIR / video.cover_url.rsplit("/", 1)[-1]
+            if cover_file.exists():
+                return video
+            # Cached file is missing — fall through to re-download below.
+        else:
+            # Remote URL — try to download and cache it locally.
+            localized = cache_cover_image(
+                video.cover_url, video.canonical_id, referer_url=video.source_url
+            )
+            if localized == video.cover_url:
+                # Download failed, but don't block the request — return as-is.
+                return video
+            updated = video.model_copy(update={"cover_url": localized})
+            return task_store.upsert_video_asset(updated)
+
+    # force_refresh=True — re-probe the source platform for the latest data.
+    if str(video.platform or "").lower() != "bilibili":
         return video
-    if not video.cover_url or video.cover_url.startswith("/media/"):
+    probe_url = video.source_url or (
+        f"https://www.bilibili.com/video/{str(video.canonical_id).split('?', 1)[0]}"
+    )
+    try:
+        refreshed, _pages, _requires_selection = probe_video_asset(probe_url, force_refresh=True)
+    except Exception:
+        logger.warning(
+            "failed to refresh bilibili cover: %s", video.video_id, exc_info=True
+        )
         return video
-    localized = cache_cover_image(video.cover_url, video.canonical_id, referer_url=video.source_url)
-    if localized == video.cover_url:
-        return video
-    updated = video.model_copy(update={"cover_url": localized})
-    return task_store.upsert_video_asset(updated)
+    merged = merge_video_asset_metadata(video, refreshed)
+    if merged.cover_url and not merged.cover_url.startswith("/media/"):
+        localized = cache_cover_image(
+            merged.cover_url, merged.canonical_id, referer_url=merged.source_url
+        )
+        if localized != merged.cover_url:
+            merged = merged.model_copy(update={"cover_url": localized})
+    if merged.cover_url:
+        return task_store.upsert_video_asset(merged)
+    return video

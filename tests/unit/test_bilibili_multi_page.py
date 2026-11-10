@@ -487,6 +487,12 @@ def test_probe_video_route_updates_existing_empty_multi_page_cover_on_force_refr
 
 
 def test_list_videos_refreshes_missing_bilibili_cover(monkeypatch) -> None:
+    """Covers are now lazily cached — listing no longer auto-probes the source.
+
+    An empty cover_url is returned as-is; the caller (frontend) can trigger a
+    refresh explicitly via the ``force_refresh`` parameter on
+    ``localize_video_cover`` or the dedicated refresh endpoint.
+    """
     connection = sqlite3.connect(":memory:", check_same_thread=False)
     connection.row_factory = sqlite3.Row
     repository = SqliteTaskRepository(connection)
@@ -521,9 +527,10 @@ def test_list_videos_refreshes_missing_bilibili_cover(monkeypatch) -> None:
     response = videos_router.list_videos(request)
     refreshed = repository.get_video_asset(asset.video_id)
 
-    assert response[0].cover_url == "/media/covers/BV1xx411c7mD.jpg"
+    # Cover is NOT auto-probed during listing — returned as-is.
+    assert response[0].cover_url == ""
     assert refreshed is not None
-    assert refreshed.cover_url == "/media/covers/BV1xx411c7mD.jpg"
+    assert refreshed.cover_url == ""
 
 
 def test_probe_video_asset_returns_youtube_single_video(monkeypatch) -> None:

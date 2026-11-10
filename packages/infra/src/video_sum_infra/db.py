@@ -64,6 +64,11 @@ def connect_sqlite(database_url: str) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, check_same_thread=False)
     connection.row_factory = sqlite3.Row
+    # WAL mode allows concurrent readers with a single writer — essential for
+    # multi-worker uvicorn deployments where several processes share the DB.
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=NORMAL")
+    connection.execute("PRAGMA cache_size=-64000")  # 64 MB page cache
     return connection
 
 
