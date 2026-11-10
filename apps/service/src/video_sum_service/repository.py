@@ -566,7 +566,8 @@ class TaskRepository:
         base = str(canonical_id or "").split("?", 1)[0]
         return base, f"{base}?p=%"
 
-    def _select_video_columns(self, prefix: str = "v") -> str:
+    def _select_video_columns(self, prefix: str = "v", *, include_result_json: bool = True) -> str:
+        result_col = ", r.result_json AS latest_result_json" if include_result_json else ", NULL AS latest_result_json"
         return f"""
                     {prefix}.video_id, {prefix}.canonical_id, {prefix}.platform, {prefix}.title, {prefix}.source_url, {prefix}.cover_url, {prefix}.duration,
                     {prefix}.page_catalog_json,
@@ -577,7 +578,7 @@ class TaskRepository:
                     {prefix}.is_favorite, {prefix}.favorite_updated_at,
                     {prefix}.folder_id, {prefix}.global_order, {prefix}.folder_order, {prefix}.global_pinned, {prefix}.folder_pinned,
                     {prefix}.is_global_visible,
-                    {prefix}.created_at, {prefix}.updated_at, r.result_json AS latest_result_json
+                    {prefix}.created_at, {prefix}.updated_at{result_col}
         """
 
     def _next_video_order(self, cursor: Any, field: str, folder_id: str | None = None) -> float:
@@ -800,12 +801,16 @@ class TaskRepository:
         include_hidden: bool = False,
         limit: int | None = None,
         offset: int = 0,
+        include_result_json: bool = True,
     ) -> tuple[list[VideoAssetRecord], int]:
         """按筛选条件返回视频资产，附带**过滤后**的总数（用于分页）。
 
         ``sort=None`` 保留旧排序（``global_pinned``/``global_order``/``updated_at``），
         只有显式传 ``sort`` 才走新排序分支。
         ``include_hidden=True`` 去掉 ``is_global_visible`` 过滤，让合集脚手架视频也进入平铺。
+        ``include_result_json=False`` skips parsing the (potentially large)
+        ``latest_result_json`` blob — callers that only need metadata should
+        set this to avoid the JSON + Pydantic overhead on every row.
         """
         clauses: list[str] = []
         params: list[object] = []
@@ -845,12 +850,12 @@ class TaskRepository:
                 LEFT JOIN task_results r ON r.task_id = v.latest_task_id
                 {where}
                 ORDER BY v.global_pinned DESC, v.global_order ASC, v.updated_at DESC
-                """.format(columns=self._select_video_columns("v"), where=where),
+                """.format(columns=self._select_video_columns("v", include_result_json=include_result_json), where=where),
                 tuple(params),
             ).fetchall()
             folder_map = self._folder_ids_map([str(row["video_id"]) for row in rows])
         videos = [
-            self._row_to_video_asset(row, folder_ids=folder_map.get(str(row["video_id"]), []))
+            self._row_to_video_asset(row, folder_ids=folder_map.get(str(row["video_id"]), []), has_result_json=include_result_json)
             for row in rows
         ]
         grouped: dict[str, VideoAssetRecord] = {}
@@ -3641,12 +3646,11 @@ class TaskRepository:
             error_message=row["error_message"],
         )
 
-    def _row_to_video_asset(self, row: Any, folder_ids: list[str] | None = None) -> VideoAssetRecord:
-        latest_result = (
-            TaskResult.model_validate(json.loads(row["latest_result_json"]))
-            if row["latest_result_json"]
-            else None
-        )
+    def _row_to_video_asset(self, row: Any, folder_ids: list[str] | None = None, *, has_result_json: bool = True) -> VideoAssetRecord:
+        if has_result_json and row["latest_result_json"]:
+            latest_result: TaskResult | None = TaskResult.model_validate(json.loads(row["latest_result_json"]))
+        else:
+            latest_result = None
         return VideoAssetRecord(
             video_id=row["video_id"],
             canonical_id=row["canonical_id"],
