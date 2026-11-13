@@ -9,6 +9,25 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+
+class CacheableStaticFiles(StaticFiles):
+    """StaticFiles with cache headers for CDN (Cloudflare) acceleration.
+
+    Hashed assets (/static/assets/) get long-lived immutable caching.
+    Other static files get shorter caching with revalidation.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            if "/assets/" in path or path.startswith("assets/"):
+                # Vite-hashed filenames: immutable, cache for 1 year
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                # Other static files: cache for 1 day, allow revalidation
+                response.headers["Cache-Control"] = "public, max-age=86400, must-revalidate"
+        return response
+
 from video_sum_service.auth import is_auth_exempt_path, request_is_authorized, unauthorized_response
 from video_sum_core.models.tasks import TaskStatus
 from video_sum_infra.db import open_database
@@ -159,8 +178,8 @@ app = FastAPI(
     description="Local-first backend service for BiliSum video summarization tasks.",
     lifespan=lifespan,
 )
-app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
-app.mount("/media", StaticFiles(directory=CACHE_STATIC_DIR), name="media")
+app.mount("/static", CacheableStaticFiles(directory=WEB_STATIC_DIR), name="static")
+app.mount("/media", CacheableStaticFiles(directory=CACHE_STATIC_DIR), name="media")
 app.include_router(system_router)
 app.include_router(videos_router)
 app.include_router(tasks_router)
@@ -187,7 +206,11 @@ def media_shared_fallback(relative_path: str):
     resolved = artifact_store.ensure_artifact_file(settings_manager.current, candidate)
     if not resolved.is_file():
         raise HTTPException(status_code=404, detail="Not found.")
-    return FileResponse(resolved, media_type=artifact_store.guess_media_type(resolved))
+    return FileResponse(
+        resolved,
+        media_type=artifact_store.guess_media_type(resolved),
+        headers={"Cache-Control": "public, max-age=86400, must-revalidate"},
+    )
 
 
 @app.middleware("http")
@@ -216,6 +239,37 @@ async def require_api_access_token(request, call_next):
         if not request_is_authorized(request, access_token_manager):
             return unauthorized_response()
     return await call_next(request)
+
+
+@app.middleware("http")
+async def add_cache_headers(request, call_next):
+    """Add cache headers for Cloudflare CDN acceleration.
+
+    - Hashed static assets: immutable, 1 year (handled by CacheableStaticFiles)
+    - Media files (covers, thumbnails): 1 day
+    - API GET responses: no-cache (must revalidate, but CF can still cache)
+    - API non-GET: no-store
+    - HTML shell: no-store (handled by frontend_shell_response)
+    """
+    response = await call_next(request)
+    path = request.url.path
+
+    # Skip if headers already set by endpoint or static file handler
+    if "cache-control" in response.headers:
+        return response
+
+    if path.startswith("/api/v1/"):
+        if request.method == "GET":
+            # Allow CF to cache but require revalidation — safe for API data
+            # that changes infrequently (video library, collections)
+            if any(p in path for p in ["/library", "/videos", "/collections", "/platforms"]):
+                response.headers["Cache-Control"] = "public, max-age=60, must-revalidate"
+            else:
+                response.headers["Cache-Control"] = "no-cache"
+        else:
+            response.headers["Cache-Control"] = "no-store"
+
+    return response
 
 
 def frontend_shell_response() -> FileResponse:
