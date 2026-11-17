@@ -432,6 +432,10 @@ jobs:
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           RELEASE_VERSION: ${{ needs.meta.outputs.release_version }}
+          # Skip Sentry sourcemap upload — no auth token in CI (upload happens
+          # on EAS where SENTRY_AUTH_TOKEN is injected). Without this the
+          # createBundleReleaseJsAndAssets_SentryUpload task fails the build.
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
         run: |
           # Download Gradle wrapper (avoids SSL issues with services.gradle.org)
           GRADLE_VERSION="9.4.1"
@@ -442,11 +446,27 @@ jobs:
             unzip -q /tmp/gradle.zip -d "$GRADLE_DIR"
           fi
           GRADLE="$GRADLE_DIR/gradle-${GRADLE_VERSION}/bin/gradle"
-          # Build only arm64 to save time
-          "$GRADLE" assembleDebug --console=plain -PreactNativeArchitectures=arm64-v8a
+
+          # Release build: unlike debug, release variants bundle/minify the JS
+          # (debuggableVariants skips bundling → blank screen on devices without Metro).
+          # Sign with the repo keystore so the APK is installable/upgradable.
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > /tmp/bilisum-release.keystore
+            "$GRADLE" assembleRelease --console=plain \
+              -PreactNativeArchitectures=arm64-v8a \
+              -Pandroid.injected.signing.store.file=/tmp/bilisum-release.keystore \
+              -Pandroid.injected.signing.store.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+              -Pandroid.injected.signing.key.alias="${{ secrets.ANDROID_KEY_ALIAS }}" \
+              -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_KEY_PASSWORD }}"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set; building unsigned release APK"
+            "$GRADLE" assembleRelease --console=plain -PreactNativeArchitectures=arm64-v8a
+          fi
+          rm -f /tmp/bilisum-release.keystore
+
           # Copy APK to release assets
           mkdir -p "$GITHUB_WORKSPACE/dist/release-assets-android"
-          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
           cp "$APK" "$GITHUB_WORKSPACE/dist/release-assets-android/BiliSum-${RELEASE_VERSION}-android.apk"
           ls -lh "$GITHUB_WORKSPACE/dist/release-assets-android/BiliSum-${RELEASE_VERSION}-android.apk"
 
